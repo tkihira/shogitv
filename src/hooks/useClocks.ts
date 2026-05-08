@@ -99,8 +99,11 @@ export function useClocks(args: {
   const gameIdRef = useRef<string | null>(null);
 
   const sync = async (gameId: string, reason: "game-change" | "sfen" | "interval") => {
-    // Throttle: skip "sfen" / "interval" triggers if a fetch happened recently.
-    if (reason !== "game-change" && shouldThrottle(lastFetchAtRef.current, 1500)) return;
+    // Throttle "interval" only — every sfen event must fetch (otherwise the very last move,
+    // which often carries the end-of-game line in the KIF, can be skipped if it arrives within
+    // a small window of the previous sync, and the TV may switch to the next game before the
+    // 30 s safety net fires).
+    if (reason === "interval" && shouldThrottle(lastFetchAtRef.current, 5000)) return;
     if (inFlightRef.current) inFlightRef.current.abort();
     const ac = new AbortController();
     inFlightRef.current = ac;
