@@ -114,13 +114,15 @@ button {
   gap: 16px;
   padding: 16px;
 }
-@media (max-width: 800px) {
+@media (max-width: 800px) and (orientation: portrait) {
   .layout {
     grid-template-columns: 1fr;
     padding: 8px;
     gap: 12px;
   }
 }
+/* Landscape on a small screen: still two-column, but the rule body lives at the very end
+ * of the file so its declarations win the cascade over later base rules. */
 
 .board-stack {
   display: flex;
@@ -216,8 +218,15 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* Total stack: hand + board + hand. Board is 12:11. Constrain by available height. */
-  --board-w: min(calc((100vh - 220px) / 12 * 9), 100%, 640px);
+  /* Total stack: hand + board + hand. Board is 12:11. Constrain by available height.
+   *
+   * The visible board face = .board-area width − 4 px (the outer .sg-wrap's 2px border on
+   * each side). Snap that face to a multiple of 9 px so cell widths are integer — without
+   * the snap, accumulated translate(N00%) on each piece drifts on iOS Safari and the
+   * rightmost pieces shift left. */
+  --board-w: calc(
+    round(down, min(calc((100vh - 220px) / 12 * 9), 100%, 640px) - 4px, 9px) + 4px
+  );
   width: var(--board-w);
 }
 .hand {
@@ -257,17 +266,24 @@ button {
   margin-left: -2px;
 }
 
-/* === Shogiground baseline === */
+/* === Shogiground baseline ===
+ *
+ * NOTE: shogiground adds an *additional* div with class="sg-wrap" inside the boardRef
+ * target, so a naïve `.sg-wrap { border: 2px }` rule applies twice and eats 8 px of inner
+ * width. We keep the structural rule (size + aspect) on every .sg-wrap and put the visible
+ * border only on the OUTER one (a direct child of .board-area). */
 .sg-wrap {
   position: relative;
   box-sizing: border-box;
   width: 100%;
   height: 0;
   padding-top: calc(100% / 11 * 12);
+  overflow: hidden;
+}
+.board-area > .sg-wrap {
   background: var(--board-bg);
   border: 2px solid var(--board-line);
   border-radius: 4px;
-  overflow: hidden;
 }
 .sg-wrap > div:first-child {
   position: absolute;
@@ -465,9 +481,16 @@ counter,
   gap: 12px;
   align-items: stretch;
 }
-@media (max-width: 800px) {
+@media (max-width: 800px) and (orientation: portrait) {
   .side-panel {
     grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 800px) and (orientation: landscape) {
+  .side-panel {
+    /* Tighten the eval-bar slot when the side column is narrow. */
+    grid-template-columns: 32px 1fr;
+    gap: 8px;
   }
 }
 
@@ -511,8 +534,10 @@ counter,
   background: var(--panel);
   border-top: 1px solid var(--border);
 }
-/* Mobile override must come after the base rules so its declarations win the cascade. */
-@media (max-width: 800px) {
+/* Portrait-only mobile: bar lays out horizontally below the board (this override must come
+ * after the base rules so its declarations win the cascade). Landscape keeps the desktop
+ * vertical bar so the side panel is dominated by the engine PV list. */
+@media (max-width: 800px) and (orientation: portrait) {
   .eval-bar {
     min-height: 32px;
     flex-direction: row;
@@ -521,7 +546,7 @@ counter,
     flex: 1;
   }
   .eval-bar .bar-fill.sente {
-    /* Horizontal bar (mobile): white grows leftward from the right edge as sente% increases. */
+    /* Horizontal bar (mobile portrait): white grows leftward from the right edge as sente% increases. */
     top: 0;
     bottom: 0;
     right: 0;
@@ -641,4 +666,59 @@ counter,
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* === Landscape mobile: compress vertical chrome so the board can be large === */
+@media (max-width: 800px) and (orientation: landscape) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) minmax(160px, 280px);
+    gap: 8px;
+    padding: 4px;
+  }
+  .board-stack {
+    gap: 2px;
+  }
+  /* Maximize board: reduce the height reservation and use the 11/12 aspect. Snap so that
+   * the inner face (board-w − 4px outer border) is a multiple of 9. */
+  .board-area {
+    --board-w: calc(
+      round(down, min(calc((100vh - 130px) / 12 * 11), 100%, 640px) - 4px, 9px) + 4px
+    );
+  }
+  /* Compact clocks. */
+  .clock-row {
+    padding: 1px 8px;
+    font-size: 0.95em;
+    min-height: 0;
+    gap: 6px;
+  }
+  .clock-meta {
+    font-size: 0.7em;
+    padding: 0 6px;
+  }
+  /* Smaller hand strip. */
+  .hand {
+    min-height: 28px;
+    padding: 2px 6px;
+  }
+  .hand piece {
+    width: 22px;
+    height: 25px;
+  }
+  .hand piece::before {
+    font-size: 14px;
+  }
+  /* Less prominent header. */
+  .game-header {
+    padding: 4px 8px;
+    font-size: 0.85em;
+  }
+  /* Footer is just credits — drop it on landscape phones to save vertical space. */
+  .app-footer {
+    display: none;
+  }
+  .flip-btn {
+    padding: 1px 8px;
+    font-size: 0.75em;
+  }
 }
