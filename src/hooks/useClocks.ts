@@ -116,22 +116,34 @@ export function useClocks(args: {
       ]);
       if (gameIdRef.current !== gameId) return; // game switched while in flight
       const built = buildFromExport(exp, info);
-      setState((s) => ({
-        ...s,
-        loading: false,
-        initial: built.initial,
-        byoyomi: built.byoyomi,
-        periods: built.periods,
-        plies: exp.lastPly,
-        turn: exp.finished ? null : exp.turn,
-        syncMs: Date.now(),
-        sente: built.sente,
-        gote: built.gote,
-        game: info ?? s.game,
-        finished: exp.finished,
-        endStatus: exp.endStatus ?? null,
-        winner: exp.winner ?? null,
-      }));
+      setState((s) => {
+        // If no new move was played and the game hasn't ended, the export carries no fresh
+        // clock authority — keep the locally-ticking clocks. Otherwise byoyomi resets to its
+        // full 30s at every safety-net sync because buildFromExport always returns the
+        // post-last-move state, where byoyomi is 30 by shogi rules.
+        const moveAdvanced = exp.lastPly > s.plies;
+        const justFinished = exp.finished && !s.finished;
+        const firstSync = s.syncMs === null;
+        if (!moveAdvanced && !justFinished && !firstSync) {
+          return { ...s, loading: false };
+        }
+        return {
+          ...s,
+          loading: false,
+          initial: built.initial,
+          byoyomi: built.byoyomi,
+          periods: built.periods,
+          plies: exp.lastPly,
+          turn: exp.finished ? null : exp.turn,
+          syncMs: Date.now(),
+          sente: built.sente,
+          gote: built.gote,
+          game: info ?? s.game,
+          finished: exp.finished,
+          endStatus: exp.endStatus ?? null,
+          winner: exp.winner ?? null,
+        };
+      });
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
       // Soft-fail: keep showing previous state.
