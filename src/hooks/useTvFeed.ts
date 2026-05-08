@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchChannels, type TvChannel } from "../feed/tvChannels";
 import { startTvFeed, type TvEvent, type TvFeaturedPlayer } from "../feed/tvFeed";
+import { fetchInitialPosition } from "../feed/replayMoves";
+import { fetchGameInfo, type GamePlayer } from "../feed/gameInfo";
 
 export type TvState = {
   status: "connecting" | "open" | "closed";
@@ -35,6 +37,14 @@ function fromChannel(ch: TvChannel): TvFeaturedPlayer {
   return { user: { id: ch.user.id, name: ch.user.name, title: ch.user.title }, rating: ch.rating };
 }
 
+function fromGameInfo(p: GamePlayer | undefined): TvFeaturedPlayer | null {
+  if (!p) return null;
+  const id = p.user?.id ?? p.userId;
+  const name = p.user?.name ?? id;
+  if (!id || !name) return null;
+  return { user: { id, name, title: p.user?.title }, rating: p.rating, ai: p.ai };
+}
+
 export function useTvFeed(): TvState {
   const [state, setState] = useState<TvState>(INITIAL);
   const lastGameIdRef = useRef<string | null>(null);
@@ -42,22 +52,43 @@ export function useTvFeed(): TvState {
   useEffect(() => {
     const ac = new AbortController();
 
-    // Best-effort initial channel fetch to populate player names before the first
-    // featured event arrives.
+    // Fetch /api/game/{id} for both player names + ratings; populate state if we still
+    // have nothing for that color (don't clobber a featured event payload that did carry
+    // player info).
+    const populatePlayers = async (gameId: string) => {
+      const info = await fetchGameInfo(gameId, ac.signal).catch(() => null);
+      if (!info) return;
+      setState((s) => {
+        if (s.gameId !== gameId) return s;
+        return {
+          ...s,
+          sente: s.sente ?? fromGameInfo(info.players.sente),
+          gote: s.gote ?? fromGameInfo(info.players.gote),
+        };
+      });
+    };
+
+    // Best-effort initial channel fetch to populate player names + a snapshot of the
+    // current position by replaying the move list — without this, the board stays empty
+    // until the next move is broadcast over SSE (which can take 0-60s).
     fetchChannels(ac.signal)
-      .then((channels) => {
+      .then(async (channels) => {
         const std = channels.standard;
         if (!std) return;
         setState((s) => {
           if (s.gameId) return s; // featured event already arrived
           lastGameIdRef.current = std.gameId;
-          return {
-            ...s,
-            gameId: std.gameId,
-            // We have only one player from this endpoint; render best-effort as sente.
-            sente: fromChannel(std),
-          };
+          return { ...s, gameId: std.gameId, sente: fromChannel(std) };
         });
+        await Promise.all([
+          fetchInitialPosition(std.gameId, ac.signal)
+            .then((initial) => {
+              if (!initial) return;
+              setState((s) => (s.sfen ? s : { ...s, sfen: initial.sfen, lm: initial.lm }));
+            })
+            .catch(() => {}),
+          populatePlayers(std.gameId),
+        ]);
       })
       .catch(() => {
         // Non-fatal; the SSE feed will eventually carry a featured event.
@@ -77,16 +108,33 @@ export function useTvFeed(): TvState {
           };
           if (d.id === lastGameIdRef.current) return;
           lastGameIdRef.current = d.id;
+          // Only bump gameSeq here — bumping posSeq too would race the gameSeq-driven
+          // /api/game fetch (which carries player names) against the posSeq-driven sync
+          // that aborts it. Subsequent SSE sfen events will naturally bump posSeq.
           setState((s) => ({
             ...s,
             gameId: d.id,
-            sfen: d.sfen ?? s.sfen,
+            sfen: d.sfen ?? null,
             lm: null,
             sente: pickColor(d.players, "sente"),
             gote: pickColor(d.players, "gote"),
             gameSeq: s.gameSeq + 1,
-            posSeq: s.posSeq + 1,
           }));
+          // Even if the featured payload doesn't carry an sfen, derive the current
+          // position so the board doesn't go blank between the switch and the next move.
+          if (!d.sfen) {
+            void fetchInitialPosition(d.id, ac.signal)
+              .then((initial) => {
+                if (!initial) return;
+                setState((s) => {
+                  if (s.gameId !== d.id || s.sfen) return s;
+                  return { ...s, sfen: initial.sfen, lm: initial.lm };
+                });
+              })
+              .catch(() => {});
+          }
+          // Populate player names from /api/game/{id} in case the featured payload didn't.
+          void populatePlayers(d.id);
         }
       },
     });

@@ -37,7 +37,7 @@ export function EvalBar({ snapshot }: Props) {
   return (
     <div className="eval-bar" aria-label={`評価値 ${label}`}>
       <div className="bar-track">
-        <div className="bar-fill sente" style={{ height: sentePct }} />
+        <div className="bar-fill sente" style={{ "--sente-pct": sentePct } as React.CSSProperties} />
       </div>
       <div className="bar-label">{label}</div>
     </div>

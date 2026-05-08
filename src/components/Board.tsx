@@ -140,7 +140,7 @@ export function Board({ sfen, lm, orientation }: Props) {
   }, [sfen, lm, orientation]);
 
   return (
-    <div className="board-area">
+    <div className={`board-area orientation-${orientation}`}>
       <div ref={handTopRef} className="hand hand-top" />
       <div className="sg-wrap">
         <div ref={boardRef} />

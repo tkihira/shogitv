@@ -355,14 +355,15 @@ piece::before {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Slight padding-top so the kanji sits in the wider lower part of the pentagon, not on the apex. */
+  padding-top: 8%;
   font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
   font-weight: 700;
   line-height: 1;
   color: var(--piece);
-  background:
-    radial-gradient(ellipse at 50% 50%, #f3d99a 0%, #e0bc6a 80%, #b78d3d 100%);
-  border-radius: 6% 18% 8% 8% / 22% 8% 8% 8%;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.3);
+  background: #f3e0b3;
+  /* Pentagon (point up). Base spans the full width; sides flare outward from the shoulders. */
+  clip-path: polygon(50% 0%, 12% 18%, 0% 100%, 100% 100%, 88% 18%);
 }
 /* Shrink the visible face inside the layout cell so pieces don't crowd each other. */
 sg-board piece::before,
@@ -374,9 +375,11 @@ sg-promotion piece::before {
   inset: 4%;
   font-size: 18px;
 }
-piece.gote::before {
-  transform: rotate(180deg);
-}
+/* Rotate the *opposing* color's pieces 180° relative to the viewer's orientation,
+ * so the viewer always sees their own pieces upright. The flip-board button toggles
+ * the .orientation-* class on .board-area, which swaps which color is shown at top. */
+.orientation-sente piece.gote::before { transform: rotate(180deg); }
+.orientation-gote piece.sente::before { transform: rotate(180deg); }
 /* Promoted pieces show in red ink */
 piece.tokin::before { content: "と"; color: #b22222; }
 piece.promotedlance::before { content: "杏"; color: #b22222; }
@@ -480,26 +483,6 @@ counter,
   overflow: hidden;
   min-height: 200px;
 }
-@media (max-width: 800px) {
-  .eval-bar {
-    min-height: 32px;
-    flex-direction: row;
-  }
-  .eval-bar .bar-track {
-    flex: 1;
-    transform: rotate(180deg);
-  }
-  .eval-bar .bar-track .bar-fill.sente {
-    /* in horizontal mobile bar, "fill" still represents sente% — flip width semantics */
-  }
-  .eval-bar .bar-label {
-    border-top: none;
-    border-left: 1px solid var(--border);
-    padding: 0 12px;
-    display: flex;
-    align-items: center;
-  }
-}
 .eval-bar.idle .bar-track,
 .eval-bar.idle .bar-label {
   opacity: 0.4;
@@ -513,10 +496,12 @@ counter,
 .eval-bar .bar-fill.sente {
   background: #fff;
   position: absolute;
+  /* Vertical bar (desktop): fill grows from the bottom upward; sente% maps to height. */
   bottom: 0;
   left: 0;
   right: 0;
-  transition: height 250ms ease-out;
+  height: var(--sente-pct, 50%);
+  transition: height 250ms ease-out, width 250ms ease-out;
 }
 .eval-bar .bar-label {
   text-align: center;
@@ -525,6 +510,32 @@ counter,
   padding: 4px 0;
   background: var(--panel);
   border-top: 1px solid var(--border);
+}
+/* Mobile override must come after the base rules so its declarations win the cascade. */
+@media (max-width: 800px) {
+  .eval-bar {
+    min-height: 32px;
+    flex-direction: row;
+  }
+  .eval-bar .bar-track {
+    flex: 1;
+  }
+  .eval-bar .bar-fill.sente {
+    /* Horizontal bar (mobile): white grows leftward from the right edge as sente% increases. */
+    top: 0;
+    bottom: 0;
+    right: 0;
+    left: auto;
+    height: auto;
+    width: var(--sente-pct, 50%);
+  }
+  .eval-bar .bar-label {
+    border-top: none;
+    border-left: 1px solid var(--border);
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+  }
 }
 
 /* === Eval score === */
