@@ -1,0 +1,586 @@
+/* === Theme tokens === */
+:root {
+  --bg: #1a1916;
+  --panel: #2a2722;
+  --border: #3a342c;
+  --text: #e9e3d8;
+  --text-dim: #a39c8e;
+  --accent: #d8b878;
+  --warn: #d97757;
+  --board-bg: #d8a85b;
+  --board-line: #2a1f10;
+  --piece: #1f1a13;
+  --last-dest: rgba(180, 220, 60, 0.45);
+  font: 16px/1.4 system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+/* === App layout === */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.game-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.game-header .players {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+.game-header .player {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.game-header .player .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.game-header .player.sente .dot {
+  background: #fff;
+  border: 1px solid #888;
+}
+.game-header .player.gote .dot {
+  background: #111;
+  border: 1px solid #888;
+}
+.game-header .rating {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 0.85em;
+}
+.game-header .vs {
+  color: var(--text-dim);
+}
+.game-header .meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+.feed-status.open {
+  color: #8edc84;
+}
+.feed-status.connecting {
+  color: var(--accent);
+}
+.feed-status.closed {
+  color: var(--warn);
+}
+
+/* === Layout: board + side panel === */
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  padding: 16px;
+}
+@media (max-width: 800px) {
+  .layout {
+    grid-template-columns: 1fr;
+    padding: 8px;
+    gap: 12px;
+  }
+}
+
+.board-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* === Clocks === */
+.clock-row {
+  width: 100%;
+  max-width: var(--board-w, 640px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 1.4em;
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: color 200ms, border-color 200ms;
+}
+.clock-row.ticking {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(216, 184, 120, 0.08);
+}
+.clock-row .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.clock-row.sente .dot { background: #fff; border: 1px solid #888; }
+.clock-row.gote .dot { background: #111; border: 1px solid #888; }
+.clock-row .time {
+  flex: 1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.clock-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8em;
+  color: var(--text-dim);
+  padding: 0 12px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: var(--board-w, 640px);
+}
+.clock-meta .est {
+  background: rgba(217, 119, 87, 0.15);
+  color: var(--warn);
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 0.9em;
+}
+.flip-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.85em;
+}
+.flip-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* === Board area === */
+.board-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Total stack: hand + board + hand. Board is 12:11. Constrain by available height. */
+  --board-w: min(calc((100vh - 220px) / 12 * 9), 100%, 640px);
+  width: var(--board-w);
+}
+.hand {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-height: 44px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+.hand sg-hand {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  width: 100%;
+}
+.hand-top sg-hand {
+  flex-direction: row-reverse; /* gote hand: rook on the right side mirroring gote orientation */
+}
+.hand sg-hp-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+}
+.hand sg-hp-wrap[data-nb="0"] {
+  opacity: 0.25;
+}
+.hand sg-hp-wrap[data-nb]:not([data-nb="0"]):not([data-nb="1"])::after {
+  content: attr(data-nb);
+  font-size: 0.85em;
+  color: var(--text);
+  font-weight: 600;
+  margin-left: -2px;
+}
+
+/* === Shogiground baseline === */
+.sg-wrap {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 0;
+  padding-top: calc(100% / 11 * 12);
+  background: var(--board-bg);
+  border: 2px solid var(--board-line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.sg-wrap > div:first-child {
+  position: absolute;
+  inset: 0;
+}
+sg-board {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  display: block;
+  top: 0;
+  left: 0;
+}
+sg-squares,
+sg-pieces,
+sg-promotion {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  line-height: 0;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  box-sizing: border-box;
+}
+sg-squares {
+  display: grid;
+  grid-template: repeat(9, 1fr) / repeat(9, 1fr);
+  background-image:
+    linear-gradient(to right, var(--board-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--board-line) 1px, transparent 1px);
+  background-size: calc(100% / 9) calc(100% / 9);
+}
+sg-squares sq {
+  display: block;
+}
+sg-squares sq.last-dest {
+  background-color: var(--last-dest);
+}
+sg-squares sq.check {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 0, 0, 0.85) 0%,
+    rgba(231, 0, 0, 0.6) 25%,
+    rgba(169, 0, 0, 0) 89%
+  );
+}
+
+/* === Piece rendering: use kanji glyphs (no SVG assets needed) === */
+.sg-wrap {
+  container-type: inline-size;
+}
+/* `<piece>` is just a positioning container — shogiground sets its inline
+ * `transform: translate(...) scale(...)` for grid placement. The visible face
+ * (bevel + kanji) is rendered on the ::before pseudo-element, which has no
+ * inline style so we can apply our own `transform: rotate(180deg)` for gote
+ * without colliding with shogiground's transform. */
+piece {
+  pointer-events: none;
+}
+sg-board piece,
+sg-promotion piece {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: scale(0.5);
+  width: calc(200% / 9);
+  height: calc(200% / 9);
+  margin: calc(-50% / 9 / 11 * 12) calc(-50% / 9);
+  z-index: 3;
+}
+.hand piece {
+  position: relative;
+  width: 32px;
+  height: 36px;
+  flex-shrink: 0;
+}
+piece::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--piece);
+  background:
+    radial-gradient(ellipse at 50% 50%, #f3d99a 0%, #e0bc6a 80%, #b78d3d 100%);
+  border-radius: 6% 18% 8% 8% / 22% 8% 8% 8%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+sg-board piece::before,
+sg-promotion piece::before {
+  font-size: 13cqw;
+}
+.hand piece::before {
+  font-size: 22px;
+}
+piece.gote::before {
+  transform: rotate(180deg);
+}
+/* Promoted pieces show in red ink */
+piece.tokin::before { content: "と"; color: #b22222; }
+piece.promotedlance::before { content: "杏"; color: #b22222; }
+piece.promotedknight::before { content: "圭"; color: #b22222; }
+piece.promotedsilver::before { content: "全"; color: #b22222; }
+piece.horse::before { content: "馬"; color: #b22222; }
+piece.dragon::before { content: "龍"; color: #b22222; }
+/* Base pieces */
+piece.pawn::before { content: "歩"; }
+piece.lance::before { content: "香"; }
+piece.knight::before { content: "桂"; }
+piece.silver::before { content: "銀"; }
+piece.gold::before { content: "金"; }
+piece.bishop::before { content: "角"; }
+piece.rook::before { content: "飛"; }
+piece.king.sente::before { content: "玉"; }
+piece.king.gote::before { content: "王"; }
+
+.hand-count {
+  font-size: 0.8em;
+  color: var(--text-dim);
+  margin-left: -4px;
+  margin-right: 4px;
+}
+sg-hand-piece-counter,
+hand-piece-counter,
+counter,
+.hand counter {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  font-size: 12px;
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0 4px;
+  pointer-events: none;
+}
+.hand:empty::before {
+  content: "持駒なし";
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+
+/* === Coordinates === */
+.sg-wrap coords {
+  position: absolute;
+  display: flex;
+  pointer-events: none;
+  opacity: 0.7;
+  font-size: 10px;
+  color: var(--board-line);
+}
+.sg-wrap coords.ranks {
+  right: 2px;
+  top: 0;
+  flex-flow: column-reverse;
+  height: 100%;
+  width: 12px;
+}
+.sg-wrap coords.ranks.gote {
+  flex-flow: column;
+}
+.sg-wrap coords.files {
+  top: 2px;
+  left: 0;
+  flex-flow: row;
+  width: 100%;
+  height: 12px;
+  text-align: center;
+}
+.sg-wrap coords.files.gote {
+  flex-flow: row-reverse;
+}
+.sg-wrap coords coord {
+  flex: 1 1 auto;
+}
+
+/* === Side panel === */
+.side-panel {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+@media (max-width: 800px) {
+  .side-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* === Eval bar === */
+.eval-bar {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  position: relative;
+  overflow: hidden;
+  min-height: 200px;
+}
+@media (max-width: 800px) {
+  .eval-bar {
+    min-height: 32px;
+    flex-direction: row;
+  }
+  .eval-bar .bar-track {
+    flex: 1;
+    transform: rotate(180deg);
+  }
+  .eval-bar .bar-track .bar-fill.sente {
+    /* in horizontal mobile bar, "fill" still represents sente% — flip width semantics */
+  }
+  .eval-bar .bar-label {
+    border-top: none;
+    border-left: 1px solid var(--border);
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+  }
+}
+.eval-bar.idle .bar-track,
+.eval-bar.idle .bar-label {
+  opacity: 0.4;
+}
+.eval-bar .bar-track {
+  flex: 1;
+  background: #111;
+  position: relative;
+  overflow: hidden;
+}
+.eval-bar .bar-fill.sente {
+  background: #fff;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  transition: height 250ms ease-out;
+}
+.eval-bar .bar-label {
+  text-align: center;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.85em;
+  padding: 4px 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+/* === Eval score === */
+.eval-score {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.eval-score .row.primary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.eval-score .value {
+  font-size: 2em;
+  font-weight: 700;
+  font-family: ui-monospace, Menlo, monospace;
+  color: var(--text);
+}
+.eval-score .caption {
+  color: var(--text-dim);
+}
+.eval-score .row.meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.8em;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.engine-status.searching {
+  color: var(--accent);
+}
+.engine-status.error {
+  color: var(--warn);
+}
+.eval-score .pv {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.eval-score .pv-label {
+  color: var(--text-dim);
+  font-size: 0.8em;
+}
+.eval-score .pv-line {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.85em;
+  word-break: break-all;
+  background: transparent;
+  color: var(--text);
+}
+
+.error-banner {
+  background: rgba(217, 119, 87, 0.15);
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 0.9em;
+}
+
+.app-footer {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  font-size: 0.8em;
+  color: var(--text-dim);
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
