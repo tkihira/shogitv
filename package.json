@@ -8,6 +8,7 @@
     "dev": "vite",
     "prebuild": "node scripts/copy-engine.mjs",
     "build": "tsc -b && vite build",
+    "deploy": "node scripts/deploy-gh-pages.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
