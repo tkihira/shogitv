@@ -1,133 +1,90 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchGameInfo, type GameClock, type GameInfo } from "../feed/gameInfo";
+import { fetchGameInfo, type GameInfo } from "../feed/gameInfo";
+import { fetchGameExport, type EndStatus, type GameExport } from "../feed/gameExport";
 
 export type Color = "sente" | "gote";
 
 export type ClockState = {
-  /** Estimated remaining main-time (ms). Negative means we've spilled into byoyomi. */
+  /** Estimated remaining main-time (ms). 0 if exhausted. */
   mainMs: number;
-  /** Remaining byoyomi periods (0..periods). Once >0 we're in byoyomi mode. */
+  /** Remaining byoyomi periods (lishogi snapshot has a single combined "byoyomi" pool here). */
   byoyomiPeriodsLeft: number;
-  /** ms left in the *current* byoyomi period (only meaningful if byoyomiPeriodsLeft > 0). */
+  /** ms left in the current byoyomi period (only meaningful if byoyomiPeriodsLeft > 0). */
   byoyomiMs: number;
 };
 
 export type UseClocksState = {
   loading: boolean;
-  clock: GameClock | null;
-  /** True if our initial main-time was estimated by halving (gameElapsed/2) instead of being exact. */
-  estimated: boolean;
+  /** Main time, seconds (for display formatting). */
+  initial: number;
+  byoyomi: number;
+  periods: number;
   plies: number;
   turn: Color | null;
-  /** Wall-clock time when we observed the most recent move arrive, used to compute live "thinking" tick. */
-  lastMoveTickerMs: number | null;
+  /** Wall-clock time of our most recent authoritative sync, used as the anchor for live ticking. */
+  syncMs: number | null;
   sente: ClockState | null;
   gote: ClockState | null;
-  /** Players from the snapshot — fills in gote name that the TV channel endpoint doesn't carry. */
+  /** From /api/game/{id} — has both player names with rating. */
   game: GameInfo | null;
+  /** True once the game has finished (resign/timeout/mate/etc.). */
+  finished: boolean;
+  endStatus: EndStatus | null;
+  winner: Color | null;
 };
 
 const INITIAL: UseClocksState = {
   loading: false,
-  clock: null,
-  estimated: false,
+  initial: 0,
+  byoyomi: 0,
+  periods: 0,
   plies: 0,
   turn: null,
-  lastMoveTickerMs: null,
+  syncMs: null,
   sente: null,
   gote: null,
   game: null,
+  finished: false,
+  endStatus: null,
+  winner: null,
 };
 
-function turnFromSfen(sfen: string | null): Color | null {
-  if (!sfen) return null;
-  const parts = sfen.trim().split(/\s+/);
-  if (parts[1] === "w") return "gote";
-  if (parts[1] === "b") return "sente";
-  return null;
-}
+/** Convert a fresh KIF export + game-info snapshot into our ClockState pair. */
+function buildFromExport(exp: GameExport, info: GameInfo | null): {
+  sente: ClockState;
+  gote: ClockState;
+  initial: number;
+  byoyomi: number;
+  periods: number;
+} {
+  const initialMs = exp.initial * 1000;
+  const byoyomiMs = exp.byoyomi * 1000;
+  const periods = info?.clock?.periods ?? (exp.byoyomi > 0 ? 1 : 0);
 
-function decrementClock(c: ClockState, deltaMs: number): ClockState {
-  if (deltaMs <= 0) return c;
-  if (c.mainMs > 0) {
-    const newMain = c.mainMs - deltaMs;
-    return { ...c, mainMs: newMain };
-  }
-  // already in byoyomi
-  if (c.byoyomiPeriodsLeft > 0) {
-    let periods = c.byoyomiPeriodsLeft;
-    let bms = c.byoyomiMs - deltaMs;
-    while (bms < 0 && periods > 1) {
-      periods -= 1;
-      bms += c.byoyomiMs > 0 ? c.byoyomiMs : 0;
-    }
-    return { ...c, byoyomiPeriodsLeft: periods, byoyomiMs: Math.max(0, bms) };
-  }
-  return c;
-}
-
-function tickByoyomiOnMove(c: ClockState, byoyomiMs: number, periods: number): ClockState {
-  // After a move completes, if we were in byoyomi (mainMs <= 0), the byoyomi clock resets to full
-  // for the *next* move and we don't lose a period unless this byoyomi was exhausted (handled above).
-  if (c.mainMs <= 0 && byoyomiMs > 0 && periods > 0) {
-    return { ...c, byoyomiMs };
-  }
-  return c;
-}
-
-/**
- * Estimate clock state from a fresh snapshot. Splits elapsed game time evenly between players —
- * good enough as a starting point; future moves we observe will be measured exactly.
- */
-function initFromSnapshot(info: GameInfo, nowMs: number): { sente: ClockState; gote: ClockState; estimated: boolean } {
-  const c = info.clock ?? { initial: 0, increment: 0, byoyomi: 0, periods: 0 };
-  const initialMs = c.initial * 1000;
-  const byoyomiMs = c.byoyomi * 1000;
-  const periods = c.periods;
-
-  const elapsedSinceLastMove = Math.max(0, nowMs - info.lastMoveAt);
-  // Crude even split of (createdAt → lastMoveAt). The side-to-move's still-ticking thinking time
-  // since lastMoveAt is added on top.
-  const usedTotalEachMs = Math.max(0, (info.lastMoveAt - info.createdAt) / 2);
-
-  const turn = info.plies % 2 === 0 ? "sente" : "gote";
-  const make = (color: Color): ClockState => {
-    let mainMs = initialMs - usedTotalEachMs;
-    if (color === turn) mainMs -= elapsedSinceLastMove;
-    if (mainMs > 0) {
+  const make = (usedMs: number): ClockState => {
+    const mainMs = Math.max(0, initialMs - usedMs);
+    if (mainMs > 0 || byoyomiMs === 0 || periods === 0) {
       return { mainMs, byoyomiPeriodsLeft: periods, byoyomiMs };
     }
-    // We've spilled into byoyomi territory. Approximate byoyomi as fresh; we don't know how many
-    // periods have already been burnt, so be generous and assume 1 period gone if mainMs is very negative.
-    const overrunMs = -mainMs;
-    let leftPeriods = periods;
-    let leftMs = byoyomiMs;
-    if (color === turn) {
-      leftMs = Math.max(0, byoyomiMs - overrunMs);
-    }
-    if (leftMs <= 0 && leftPeriods > 1) {
-      leftPeriods -= 1;
-      leftMs = byoyomiMs;
-    }
-    return { mainMs: 0, byoyomiPeriodsLeft: leftPeriods, byoyomiMs: leftMs };
+    // Spilled into byoyomi. We don't get per-period detail from KIF, so assume periods are
+    // intact and the current byoyomi clock is full at last move.
+    return { mainMs: 0, byoyomiPeriodsLeft: periods, byoyomiMs };
   };
 
   return {
-    sente: make("sente"),
-    gote: make("gote"),
-    estimated: usedTotalEachMs > 0,
+    sente: make(exp.senteUsedMs),
+    gote: make(exp.goteUsedMs),
+    initial: exp.initial,
+    byoyomi: exp.byoyomi,
+    periods,
   };
 }
 
-/**
- * Track estimated clocks for the featured TV game.
- *
- * Inputs:
- *   gameId — current featured game id (changes on featured event)
- *   gameSeq — increments when gameId changes (so we know to re-fetch)
- *   posSeq — increments on every sfen event (so we know when a move just arrived)
- *   sfen — current sfen string (used to know whose turn it is now)
- */
+/** Hybrid trigger: fetch export at most once per `minIntervalMs`. */
+function shouldThrottle(lastFetchAt: number, minIntervalMs: number): boolean {
+  return Date.now() - lastFetchAt < minIntervalMs;
+}
+
 export function useClocks(args: {
   gameId: string | null;
   gameSeq: number;
@@ -137,121 +94,112 @@ export function useClocks(args: {
   const [state, setState] = useState<UseClocksState>(INITIAL);
   const lastSeenGameSeqRef = useRef<number>(-1);
   const lastSeenPosSeqRef = useRef<number>(-1);
-  const turnRef = useRef<Color | null>(null);
+  const lastFetchAtRef = useRef<number>(0);
+  const inFlightRef = useRef<AbortController | null>(null);
+  const gameIdRef = useRef<string | null>(null);
 
-  // Fetch snapshot whenever the featured game changes.
+  const sync = async (gameId: string, reason: "game-change" | "sfen" | "interval") => {
+    // Throttle: skip "sfen" / "interval" triggers if a fetch happened recently.
+    if (reason !== "game-change" && shouldThrottle(lastFetchAtRef.current, 1500)) return;
+    if (inFlightRef.current) inFlightRef.current.abort();
+    const ac = new AbortController();
+    inFlightRef.current = ac;
+    lastFetchAtRef.current = Date.now();
+    try {
+      const [exp, info] = await Promise.all([
+        fetchGameExport(gameId, ac.signal),
+        // Only re-fetch /api/game on game-change; export already reveals end status.
+        reason === "game-change" ? fetchGameInfo(gameId, ac.signal).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (gameIdRef.current !== gameId) return; // game switched while in flight
+      const built = buildFromExport(exp, info);
+      setState((s) => ({
+        ...s,
+        loading: false,
+        initial: built.initial,
+        byoyomi: built.byoyomi,
+        periods: built.periods,
+        plies: exp.lastPly,
+        turn: exp.finished ? null : exp.turn,
+        syncMs: Date.now(),
+        sente: built.sente,
+        gote: built.gote,
+        game: info ?? s.game,
+        finished: exp.finished,
+        endStatus: exp.endStatus ?? null,
+        winner: exp.winner ?? null,
+      }));
+    } catch (err) {
+      if ((err as { name?: string }).name === "AbortError") return;
+      // Soft-fail: keep showing previous state.
+    } finally {
+      if (inFlightRef.current === ac) inFlightRef.current = null;
+    }
+  };
+
+  // Trigger 1: featured game changed.
   useEffect(() => {
     if (!args.gameId) return;
-    if (lastSeenGameSeqRef.current === args.gameSeq) return;
+    if (lastSeenGameSeqRef.current === args.gameSeq && gameIdRef.current === args.gameId) return;
     lastSeenGameSeqRef.current = args.gameSeq;
-
-    const ac = new AbortController();
-    setState((s) => ({ ...s, loading: true }));
-    fetchGameInfo(args.gameId, ac.signal)
-      .then((info) => {
-        const now = Date.now();
-        const init = initFromSnapshot(info, now);
-        const turn: Color = info.plies % 2 === 0 ? "sente" : "gote";
-        turnRef.current = turn;
-        setState({
-          loading: false,
-          clock: info.clock ?? null,
-          estimated: init.estimated,
-          plies: info.plies,
-          turn,
-          lastMoveTickerMs: now,
-          sente: init.sente,
-          gote: init.gote,
-          game: info,
-        });
-      })
-      .catch(() => {
-        setState((s) => ({ ...s, loading: false }));
-      });
-
-    return () => ac.abort();
+    gameIdRef.current = args.gameId;
+    setState(() => ({ ...INITIAL, loading: true }));
+    void sync(args.gameId, "game-change");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.gameId, args.gameSeq]);
 
-  // Apply each new sfen update — measure elapsed since previous sfen, charge it to whoever
-  // was on the move, then flip the turn.
+  // Trigger 2: SSE delivered a new sfen — re-fetch to capture exact per-move clock.
   useEffect(() => {
     if (lastSeenPosSeqRef.current === args.posSeq) return;
     lastSeenPosSeqRef.current = args.posSeq;
-    const newTurn = turnFromSfen(args.sfen);
-    if (!newTurn) return;
+    if (!gameIdRef.current) return;
+    void sync(gameIdRef.current, "sfen");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [args.posSeq]);
 
-    setState((s) => {
-      if (!s.clock || !s.sente || !s.gote || s.lastMoveTickerMs === null) {
-        // Snapshot not loaded yet — just remember the turn.
-        return { ...s, turn: newTurn, lastMoveTickerMs: Date.now() };
-      }
-      const now = Date.now();
-      const dt = Math.max(0, now - s.lastMoveTickerMs);
-      const moverColor: Color = newTurn === "sente" ? "gote" : "sente";
-      const byoyomiMs = s.clock.byoyomi * 1000;
-      let sente = s.sente;
-      let gote = s.gote;
-      if (moverColor === "sente") {
-        sente = decrementClock(sente, dt);
-        sente = tickByoyomiOnMove(sente, byoyomiMs, s.clock.periods);
-      } else {
-        gote = decrementClock(gote, dt);
-        gote = tickByoyomiOnMove(gote, byoyomiMs, s.clock.periods);
-      }
-      turnRef.current = newTurn;
-      return {
-        ...s,
-        sente,
-        gote,
-        turn: newTurn,
-        plies: s.plies + 1,
-        lastMoveTickerMs: now,
-      };
-    });
-  }, [args.posSeq, args.sfen]);
-
-  // Live ticking once a second on the side-to-move so the displayed remaining counts down visually.
+  // Trigger 3: 30s safety net — re-sync to catch end-of-game when no further sfen will arrive.
   useEffect(() => {
-    if (!state.clock || !state.turn) return;
+    if (!args.gameId) return;
+    const id = window.setInterval(() => {
+      if (gameIdRef.current) void sync(gameIdRef.current, "interval");
+    }, 30_000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [args.gameId]);
+
+  // Live ticking on the side-to-move so the UI counts down between server syncs.
+  // The 30s safety-net sync (and SSE-triggered syncs) correct any drift.
+  useEffect(() => {
+    if (!state.turn || state.finished) return;
     const id = window.setInterval(() => {
       setState((s) => {
-        if (!s.clock || !s.turn || !s.sente || !s.gote || s.lastMoveTickerMs === null) return s;
-        const now = Date.now();
-        const dt = now - s.lastMoveTickerMs;
-        if (dt < 250) return s;
-        const byoyomiMs = s.clock.byoyomi * 1000;
+        if (!s.turn || s.finished || !s.sente || !s.gote) return s;
         const apply = (c: ClockState) => {
-          // Re-derive remaining from the anchor lastMoveTickerMs to keep tick precise (avoids drift).
-          if (c.mainMs > 0) {
-            return { ...c, mainMs: Math.max(0, c.mainMs - 1000) };
-          }
-          if (byoyomiMs > 0 && c.byoyomiMs > 0) {
+          if (c.mainMs > 0) return { ...c, mainMs: Math.max(0, c.mainMs - 1000) };
+          if (c.byoyomiPeriodsLeft > 0 && c.byoyomiMs > 0) {
             return { ...c, byoyomiMs: Math.max(0, c.byoyomiMs - 1000) };
           }
           return c;
         };
         return s.turn === "sente"
-          ? { ...s, sente: apply(s.sente), lastMoveTickerMs: now }
-          : { ...s, gote: apply(s.gote), lastMoveTickerMs: now };
+          ? { ...s, sente: apply(s.sente) }
+          : { ...s, gote: apply(s.gote) };
       });
     }, 1000);
     return () => window.clearInterval(id);
-  }, [state.clock, state.turn]);
+  }, [state.turn, state.finished]);
 
   return state;
 }
 
-export function formatClockSetting(c: GameClock): string {
-  const minutes = Math.floor(c.initial / 60);
-  const seconds = c.initial % 60;
+export function formatClockSetting(initial: number, byoyomi: number, periods: number): string {
+  const minutes = Math.floor(initial / 60);
+  const seconds = initial % 60;
   const main = seconds === 0 ? `${minutes}分` : `${minutes}:${String(seconds).padStart(2, "0")}`;
-  if (c.byoyomi > 0) {
-    return c.periods > 1
-      ? `${main} + 秒読み${c.byoyomi}秒×${c.periods}`
-      : `${main} + 秒読み${c.byoyomi}秒`;
-  }
-  if (c.increment > 0) {
-    return `${main} + ${c.increment}秒`;
+  if (byoyomi > 0) {
+    return periods > 1
+      ? `${main} + 秒読み${byoyomi}秒×${periods}`
+      : `${main} + 秒読み${byoyomi}秒`;
   }
   return main;
 }

@@ -3,7 +3,7 @@ import { Board } from "./components/Board";
 import { GameHeader } from "./components/GameHeader";
 import { EvalBar } from "./components/EvalBar";
 import { EvalScore } from "./components/EvalScore";
-import { ClockRow, ClockMeta } from "./components/Clocks";
+import { ClockRow, ClockMeta, GameResultBanner } from "./components/Clocks";
 import { useTvFeed } from "./hooks/useTvFeed";
 import { useEngine } from "./hooks/useEngine";
 import { useClocks } from "./hooks/useClocks";
@@ -75,6 +75,7 @@ export default function App() {
           <Board sfen={tv.sfen} lm={tv.lm} orientation={orientation} />
           <ClockRow state={clocks} color={orientation} />
           <ClockMeta state={clocks} />
+          <GameResultBanner state={clocks} />
           <button
             type="button"
             className="flip-btn"
