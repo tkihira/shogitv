@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Board } from "./components/Board";
 import { GameHeader } from "./components/GameHeader";
 import { EvalBar } from "./components/EvalBar";
@@ -55,6 +55,33 @@ export default function App() {
       newGame();
     }
   }, [tv.gameSeq, newGame]);
+
+  // Preserve the user's scroll position across game changes. The TV switch causes a layout
+  // shrink that cascades through several React commits (gameSeq → INITIAL clocks → empty
+  // engine snapshot → eventually the new game's data lands). On short viewports — iPhone
+  // landscape especially — the shrink can drop total content below the viewport so the
+  // browser clamps scrollY to 0 ("returns to top"). The cleanup captures pre-change scroll,
+  // and the body re-asserts it across several rAFs to outlast the transient settling.
+  const savedScrollRef = useRef(0);
+  useLayoutEffect(() => {
+    const targetY = savedScrollRef.current;
+    savedScrollRef.current = 0;
+    let cancelled = false;
+    const restoreFor = [0, 50, 150, 350, 700];
+    const timers = targetY > 0
+      ? restoreFor.map((dt) =>
+          window.setTimeout(() => {
+            if (cancelled) return;
+            if (window.scrollY < targetY) window.scrollTo(0, targetY);
+          }, dt),
+        )
+      : [];
+    return () => {
+      cancelled = true;
+      timers.forEach((id) => window.clearTimeout(id));
+      savedScrollRef.current = window.scrollY;
+    };
+  }, [tv.gameSeq]);
 
   // Submit each new SFEN to the engine once it's ready.
   useEffect(() => {
