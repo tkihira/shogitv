@@ -11,7 +11,7 @@ type Props = {
 function cpToRatio(cp: number): number {
   const clamped = Math.max(-2000, Math.min(2000, cp));
   const sign = Math.sign(clamped);
-  const k = 0.0035;
+  const k = 0.001;
   const t = sign * (1 - Math.exp(-Math.abs(clamped) * k));
   return 0.5 + t * 0.5;
 }
@@ -31,7 +31,7 @@ export function EvalBar({ snapshot }: Props) {
   } else if (best.cp !== undefined) {
     const senteCp = best.cp * senteSign;
     ratio = cpToRatio(senteCp);
-    label = (senteCp >= 0 ? "+" : "") + (senteCp / 100).toFixed(1);
+    label = (senteCp >= 0 ? "+" : "") + senteCp;
   }
   const sentePct = `${(ratio * 100).toFixed(2)}%`;
   return (

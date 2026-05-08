@@ -102,8 +102,8 @@ export function useClocks(args: {
     // Throttle "interval" only — every sfen event must fetch (otherwise the very last move,
     // which often carries the end-of-game line in the KIF, can be skipped if it arrives within
     // a small window of the previous sync, and the TV may switch to the next game before the
-    // 30 s safety net fires).
-    if (reason === "interval" && shouldThrottle(lastFetchAtRef.current, 5000)) return;
+    // safety net fires).
+    if (reason === "interval" && shouldThrottle(lastFetchAtRef.current, 3000)) return;
     if (inFlightRef.current) inFlightRef.current.abort();
     const ac = new AbortController();
     inFlightRef.current = ac;
@@ -160,12 +160,13 @@ export function useClocks(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.posSeq]);
 
-  // Trigger 3: 30s safety net — re-sync to catch end-of-game when no further sfen will arrive.
+  // Trigger 3: 5s safety net — re-sync to catch end-of-game (especially 切れ負け, which never
+  // emits an sfen event) before the lishogi TV switches to the next game (~5-15s after end).
   useEffect(() => {
     if (!args.gameId) return;
     const id = window.setInterval(() => {
       if (gameIdRef.current) void sync(gameIdRef.current, "interval");
-    }, 30_000);
+    }, 5_000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.gameId]);
