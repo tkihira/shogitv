@@ -17,15 +17,16 @@ self.onmessage = async (ev) => {
 
   if (msg.kind === "init") {
     try {
-      // Loads `var YaneuraOu_K_P = (...)()` onto the worker global scope.
-      self.importScripts("/engine/yaneuraou.k-p.js");
+      // Resolve all engine assets relative to this worker's own URL so the same code works
+      // under both the dev server (/) and the GH Pages subpath (/shogitv/).
+      self.importScripts("yaneuraou.k-p.js");
       const factory = self.YaneuraOu_K_P;
       if (typeof factory !== "function") {
         throw new Error("YaneuraOu_K_P factory not found after importScripts");
       }
-      const engineUrl = new URL("/engine/yaneuraou.k-p.js", self.location.href).href;
+      const engineUrl = new URL("yaneuraou.k-p.js", self.location.href).href;
       const engine = await factory({
-        locateFile: (name) => new URL("/engine/" + name, self.location.href).href,
+        locateFile: (name) => new URL(name, self.location.href).href,
         mainScriptUrlOrBlob: engineUrl,
         print: () => {},
         printErr: (line) => console.warn("[engine]", line),

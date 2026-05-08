@@ -6,6 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1c1917" />
     <title>shogi tv — lishogi 注目対局 + 評価値</title>
+    <!-- coi-serviceworker injects COOP/COEP headers via a service worker so SharedArrayBuffer
+         (= YaneuraOu.wasm threading) works on hosts that can't set custom HTTP headers,
+         notably GitHub Pages. The SW registers, then reloads the page once so the next load
+         is cross-origin isolated. -->
+    <script src="./coi-serviceworker.js"></script>
   </head>
   <body>
     <div id="root"></div>

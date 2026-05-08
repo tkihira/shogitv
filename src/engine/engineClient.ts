@@ -28,7 +28,8 @@ export type EngineEvents = {
   onError?: (err: string) => void;
 };
 
-const WORKER_URL = "/engine/worker-host.js";
+// Use BASE_URL so we work both on the dev server (/) and on a GH Pages subpath (/shogitv/).
+const WORKER_URL = `${import.meta.env.BASE_URL}engine/worker-host.js`;
 
 export class EngineClient {
   private worker: Worker | null = null;
