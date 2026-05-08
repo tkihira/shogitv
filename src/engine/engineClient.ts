@@ -1,15 +1,24 @@
 import { isBestmoveLine, parseInfoLine, type ParsedInfo } from "./usi";
 
-export type EngineSnapshot = {
+export type EnginePvLine = {
+  /** 1 = best, 2 = second-best, ... */
+  multipv: number;
   cp?: number;
   mate?: number;
   depth?: number;
   pv?: string[];
-  /** "sente" | "gote" — whose turn it was when this score was reported. */
+};
+
+export type EngineSnapshot = {
+  /** Lines sorted by multipv ascending. lines[0] is the best. */
+  lines: EnginePvLine[];
+  /** "sente" | "gote" — whose turn it was when these scores were reported. */
   turn: "sente" | "gote";
   /** monotonic counter incremented on each new search */
   jobId: number;
 };
+
+export const MULTI_PV = 3;
 
 export type EngineStatus = "loading" | "idle" | "searching" | "error";
 
@@ -29,6 +38,8 @@ export class EngineClient {
   private pendingStop = false;
   private hasActiveSearch = false;
   private queued: { sfen: string; turn: "sente" | "gote"; movetime: number } | null = null;
+  /** PV lines for the current search, keyed by multipv index. Cleared on each new search. */
+  private currentLines: Map<number, EnginePvLine> = new Map();
   private readonly events: EngineEvents;
 
   constructor(events: EngineEvents) {
@@ -64,7 +75,7 @@ export class EngineClient {
     this.send(`setoption name Threads value ${Math.max(1, threads)}`);
     this.send("setoption name USI_Hash value 64");
     this.send("setoption name PvInterval value 0");
-    this.send("setoption name MultiPV value 1");
+    this.send(`setoption name MultiPV value ${MULTI_PV}`);
     await this.sendUntil("isready", (line) => line === "readyok");
     this.send("usinewgame");
     this.ready = true;
@@ -111,12 +122,28 @@ export class EngineClient {
     this.queued = null;
     this.currentTurn = turn;
     this.jobId++;
+    this.currentLines = new Map();
     this.hasActiveSearch = true;
     this.pendingStop = false;
     // Append a move counter (1) — lishogi TV SFEN omits it.
     this.send(`position sfen ${sfen} 1`);
     this.send(`go movetime ${movetime}`);
     this.events.onStatus("searching");
+  }
+
+  private emitSnapshot() {
+    const lines: EnginePvLine[] = [];
+    const ranks = Array.from(this.currentLines.keys()).sort((a, b) => a - b);
+    for (const r of ranks) {
+      const ln = this.currentLines.get(r);
+      if (ln) lines.push(ln);
+    }
+    if (lines.length === 0) return;
+    this.events.onSnapshot({
+      lines,
+      turn: this.currentTurn,
+      jobId: this.jobId,
+    });
   }
 
   private onWorkerMessage(data: { kind: string; line?: string; message?: string }) {
@@ -133,14 +160,19 @@ export class EngineClient {
       }
       const info: ParsedInfo | undefined = parseInfoLine(line);
       if (info && (info.cp !== undefined || info.mate !== undefined)) {
-        this.events.onSnapshot({
+        // Engines typically restart the multipv enumeration each iteration. When we see
+        // multipv=1 we've moved on to a fresh depth, so keep the previous lines around (they
+        // may still be valid until overwritten) rather than clearing — this matters because
+        // an engine that prunes a line at higher depth might not re-emit it at the new depth.
+        // The simple "last-seen wins" map handles that naturally.
+        this.currentLines.set(info.multipv, {
+          multipv: info.multipv,
           cp: info.cp,
           mate: info.mate,
           depth: info.depth,
           pv: info.pv,
-          turn: this.currentTurn,
-          jobId: this.jobId,
         });
+        this.emitSnapshot();
       }
     } else if (data.kind === "error") {
       this.events.onError?.(data.message ?? "unknown engine error");

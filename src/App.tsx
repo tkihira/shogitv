@@ -92,6 +92,8 @@ export default function App() {
             status={engine.status}
             threads={engine.threads}
             isolated={engine.isolated}
+            sfen={tv.sfen}
+            lm={tv.lm}
           />
           {engine.errorMessage ? (
             <div className="error-banner">

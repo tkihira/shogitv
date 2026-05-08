@@ -1,24 +1,27 @@
-import type { EngineSnapshot } from "../engine/engineClient";
-import type { EngineStatus } from "../engine/engineClient";
+import { useMemo } from "react";
+import type { EnginePvLine, EngineSnapshot, EngineStatus } from "../engine/engineClient";
+import { usiPvToJapanese } from "../engine/pvNotation";
 
 type Props = {
   snapshot: EngineSnapshot | null;
   status: EngineStatus;
   threads: number;
   isolated: boolean;
+  sfen: string | null;
+  lm: string | null;
 };
 
-function formatScore(s: EngineSnapshot): { value: string; sub: string } {
-  const senteSign = s.turn === "sente" ? 1 : -1;
-  if (s.mate !== undefined) {
-    const senteWinning = s.mate > 0 ? s.turn === "sente" : s.turn === "gote";
+function formatScore(line: EnginePvLine, turn: "sente" | "gote"): { value: string; sub: string } {
+  const senteSign = turn === "sente" ? 1 : -1;
+  if (line.mate !== undefined) {
+    const senteWinning = line.mate > 0 ? turn === "sente" : turn === "gote";
     return {
-      value: `${senteWinning ? "+" : "-"}M${Math.abs(s.mate)}`,
+      value: `${senteWinning ? "+" : "-"}M${Math.abs(line.mate)}`,
       sub: senteWinning ? "先手勝勢" : "後手勝勢",
     };
   }
-  if (s.cp !== undefined) {
-    const senteCp = s.cp * senteSign;
+  if (line.cp !== undefined) {
+    const senteCp = line.cp * senteSign;
     const sign = senteCp >= 0 ? "+" : "";
     return {
       value: `${sign}${(senteCp / 100).toFixed(2)}`,
@@ -28,8 +31,33 @@ function formatScore(s: EngineSnapshot): { value: string; sub: string } {
   return { value: "—", sub: "" };
 }
 
-export function EvalScore({ snapshot, status, threads, isolated }: Props) {
-  const score = snapshot ? formatScore(snapshot) : null;
+function formatScoreShort(line: EnginePvLine, turn: "sente" | "gote"): string {
+  const senteSign = turn === "sente" ? 1 : -1;
+  if (line.mate !== undefined) {
+    const senteWinning = line.mate > 0 ? turn === "sente" : turn === "gote";
+    return `${senteWinning ? "+" : "-"}M${Math.abs(line.mate)}`;
+  }
+  if (line.cp !== undefined) {
+    const senteCp = line.cp * senteSign;
+    return (senteCp >= 0 ? "+" : "") + (senteCp / 100).toFixed(2);
+  }
+  return "—";
+}
+
+export function EvalScore({ snapshot, status, threads, isolated, sfen, lm }: Props) {
+  const best = snapshot?.lines[0] ?? null;
+  const score = snapshot && best ? formatScore(best, snapshot.turn) : null;
+
+  // Convert each PV line to Japanese once per snapshot/sfen change.
+  const lineDisplays = useMemo(() => {
+    if (!snapshot) return [];
+    return snapshot.lines.map((ln) => ({
+      multipv: ln.multipv,
+      score: formatScoreShort(ln, snapshot.turn),
+      pv: usiPvToJapanese(sfen, lm, ln.pv).slice(0, 10).join(" "),
+    }));
+  }, [snapshot, sfen, lm]);
+
   return (
     <section className="eval-score">
       <div className="row primary">
@@ -46,13 +74,20 @@ export function EvalScore({ snapshot, status, threads, isolated }: Props) {
                 ? "待機中"
                 : "エラー"}
         </span>
-        {snapshot?.depth !== undefined ? <span className="depth">depth {snapshot.depth}</span> : null}
+        {best?.depth !== undefined ? <span className="depth">depth {best.depth}</span> : null}
         <span className="threads">{threads}T{isolated ? "" : " (no SAB)"}</span>
       </div>
-      {snapshot?.pv && snapshot.pv.length > 0 ? (
-        <div className="pv">
+      {lineDisplays.length > 0 ? (
+        <div className="pv-list">
           <span className="pv-label">読み筋</span>
-          <code className="pv-line">{snapshot.pv.slice(0, 12).join(" ")}</code>
+          <ol className="pv-lines">
+            {lineDisplays.map((d) => (
+              <li key={d.multipv} className={d.multipv === 1 ? "pv-row best" : "pv-row"}>
+                <span className="pv-score">{d.score}</span>
+                <span className="pv-line">{d.pv}</span>
+              </li>
+            ))}
+          </ol>
         </div>
       ) : null}
     </section>

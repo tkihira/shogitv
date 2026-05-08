@@ -17,19 +17,19 @@ function cpToRatio(cp: number): number {
 }
 
 export function EvalBar({ snapshot }: Props) {
-  if (!snapshot) {
+  const best = snapshot?.lines[0];
+  if (!snapshot || !best) {
     return <div className="eval-bar idle" aria-label="評価値なし" />;
   }
-  // Snapshot is from side-to-move's POV. Convert to sente-positive.
   const senteSign = snapshot.turn === "sente" ? 1 : -1;
   let ratio = 0.5;
   let label = "0";
-  if (snapshot.mate !== undefined) {
-    const senteWinning = snapshot.mate > 0 ? snapshot.turn === "sente" : snapshot.turn === "gote";
+  if (best.mate !== undefined) {
+    const senteWinning = best.mate > 0 ? snapshot.turn === "sente" : snapshot.turn === "gote";
     ratio = senteWinning ? 1 : 0;
-    label = `${senteWinning ? "+" : "-"}M${Math.abs(snapshot.mate)}`;
-  } else if (snapshot.cp !== undefined) {
-    const senteCp = snapshot.cp * senteSign;
+    label = `${senteWinning ? "+" : "-"}M${Math.abs(best.mate)}`;
+  } else if (best.cp !== undefined) {
+    const senteCp = best.cp * senteSign;
     ratio = cpToRatio(senteCp);
     label = (senteCp >= 0 ? "+" : "") + (senteCp / 100).toFixed(1);
   }

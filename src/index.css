@@ -565,10 +565,10 @@ counter,
 .engine-status.error {
   color: var(--warn);
 }
-.eval-score .pv {
+.eval-score .pv-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   border-top: 1px solid var(--border);
   padding-top: 8px;
 }
@@ -576,12 +576,40 @@ counter,
   color: var(--text-dim);
   font-size: 0.8em;
 }
-.eval-score .pv-line {
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 0.85em;
-  word-break: break-all;
-  background: transparent;
+.eval-score .pv-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.eval-score .pv-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 8px;
+  font-size: 0.92em;
+  line-height: 1.45;
+  color: var(--text-dim);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.eval-score .pv-row.best {
   color: var(--text);
+}
+.eval-score .pv-score {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.9em;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--accent);
+  align-self: start;
+}
+.eval-score .pv-row:not(.best) .pv-score {
+  color: var(--text-dim);
+}
+.eval-score .pv-line {
+  color: inherit;
 }
 
 .error-banner {

@@ -8,6 +8,8 @@ export type EngineEval = {
 };
 
 export type ParsedInfo = {
+  /** USI MultiPV rank (1 = best). Defaults to 1 if the engine omits the field. */
+  multipv: number;
   depth?: number;
   cp?: number;
   mate?: number;
@@ -21,13 +23,16 @@ export type ParsedInfo = {
 export function parseInfoLine(line: string): ParsedInfo | undefined {
   if (!line.startsWith("info")) return undefined;
   const tokens = line.split(/\s+/);
+  let multipv = 1;
   let depth: number | undefined;
   let cp: number | undefined;
   let mate: number | undefined;
   let pv: string[] | undefined;
   for (let i = 1; i < tokens.length; i++) {
     const tok = tokens[i];
-    if (tok === "depth") {
+    if (tok === "multipv") {
+      multipv = parseInt(tokens[++i], 10);
+    } else if (tok === "depth") {
       depth = parseInt(tokens[++i], 10);
     } else if (tok === "score") {
       const kind = tokens[++i];
@@ -45,7 +50,7 @@ export function parseInfoLine(line: string): ParsedInfo | undefined {
   if (cp === undefined && mate === undefined && pv === undefined && depth === undefined) {
     return undefined;
   }
-  return { depth, cp, mate, pv };
+  return { multipv, depth, cp, mate, pv };
 }
 
 export function isBestmoveLine(line: string): boolean {
