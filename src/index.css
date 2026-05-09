@@ -253,12 +253,12 @@ button {
    * The visible board face = .board-area width − 4 px (the outer .sg-wrap's 2px border on
    * each side). Snap that face to a multiple of 9 px so cell widths are integer — without
    * the snap, accumulated translate(N00%) on each piece drifts on iOS Safari and the
-   * rightmost pieces shift left. Width-side limit also subtracts the eval bar (32 px) and
+   * rightmost pieces shift left. Width-side limit also subtracts the eval bar (40 px) and
    * gap (6 px) so the row fits inside the column. */
   --board-w: calc(
     round(down, min(
       calc((100vh - 220px) / 12 * 9),
-      calc(100% - 38px),
+      calc(100% - 46px),
       640px
     ) - 4px, 9px) + 4px
   );
@@ -529,9 +529,11 @@ counter,
   align-items: stretch;
   position: relative;
   overflow: hidden;
-  /* Stretches to match .board-area's height via flex align-items:stretch on the parent. */
-  width: 32px;
-  flex: 0 0 32px;
+  /* Stretches to match .board-area's height via flex align-items:stretch on the parent.
+   * 40px gives the label slot enough room for 5-character values like "-1102" / "+M11";
+   * the .board-area --board-w formulas subtract 46 px (40 bar + 6 gap) to reserve space. */
+  width: 40px;
+  flex: 0 0 40px;
 }
 .eval-bar.idle .bar-track,
 .eval-bar.idle .bar-label {
@@ -556,8 +558,10 @@ counter,
 .eval-bar .bar-label {
   text-align: center;
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 0.85em;
-  padding: 4px 0;
+  font-size: 0.75em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+  padding: 4px 2px;
   background: var(--panel);
   border-top: 1px solid var(--border);
 }
@@ -684,7 +688,7 @@ counter,
     --board-w: calc(
       round(down, min(
         calc((100vh - 130px) / 12 * 11),
-        calc(100% - 38px),
+        calc(100% - 46px),
         640px
       ) - 4px, 9px) + 4px
     );
