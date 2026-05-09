@@ -154,9 +154,16 @@ export default function App() {
       </main>
       <footer className="app-footer">
         <span>
-          source: <a href="https://lishogi.org/tv" target="_blank" rel="noreferrer">lishogi TV</a>
+          data: <a href="https://lishogi.org/tv" target="_blank" rel="noreferrer">lishogi TV</a>
         </span>
         <span>engine: YaneuraOu NNUE K-P (WASM, GPL-3.0)</span>
+        <span>
+          source: <a
+            href="https://github.com/tkihira/shogitv"
+            target="_blank"
+            rel="noreferrer"
+          >github.com/tkihira/shogitv</a> (GPL-3.0+)
+        </span>
       </footer>
     </div>
   );

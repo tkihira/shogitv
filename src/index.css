@@ -105,6 +105,16 @@ button {
 .feed-status.closed {
   color: var(--warn);
 }
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  line-height: 0;
+  transition: color 200ms;
+}
+.source-link:hover {
+  color: var(--text);
+}
 
 /* === Layout: board + side panel === */
 .layout {
