@@ -2,11 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 
-// credentialless (not require-corp) so cross-origin fetches/EventSource to lishogi.org
-// work without lishogi setting Cross-Origin-Resource-Policy on its responses.
 const isolation = {
   "Cross-Origin-Opener-Policy": "same-origin",
-  "Cross-Origin-Embedder-Policy": "credentialless",
+  "Cross-Origin-Embedder-Policy": "require-corp",
 };
 
 // HTTPS is required for SharedArrayBuffer outside of localhost (Safari especially is strict
