@@ -72,17 +72,19 @@ export default function App() {
   // Defer queued game switches until 5 seconds after the current game finishes, so the user
   // gets to read the result banner before the TV moves on. tv.pendingGame is the next id
   // that lishogi has sent via SSE `featured` but we haven't committed yet.
+  //
+  // Single effect (rather than splitting "set finishedAt" and "start timer" into two): keeps
+  // the anchor and the timer in the same closure so we can never read a stale finishedAtRef
+  // from a sibling effect that hasn't run yet.
   const finishedAtRef = useRef<number | null>(null);
   useEffect(() => {
-    if (clocks.finished) {
-      finishedAtRef.current = finishedAtRef.current ?? Date.now();
-    } else {
+    if (!clocks.finished) {
       finishedAtRef.current = null;
+      return;
     }
-  }, [clocks.finished]);
-  useEffect(() => {
-    if (!clocks.finished || !tv.pendingGame) return;
-    const elapsed = finishedAtRef.current ? Date.now() - finishedAtRef.current : 0;
+    if (finishedAtRef.current === null) finishedAtRef.current = Date.now();
+    if (!tv.pendingGame) return;
+    const elapsed = Date.now() - finishedAtRef.current;
     const remaining = Math.max(0, 5000 - elapsed);
     const t = window.setTimeout(() => tv.applyPendingNow(), remaining);
     return () => window.clearTimeout(t);
