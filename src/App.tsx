@@ -69,6 +69,25 @@ export default function App() {
     }
   }, [tv.gameSeq, newGame]);
 
+  // Defer queued game switches until 5 seconds after the current game finishes, so the user
+  // gets to read the result banner before the TV moves on. tv.pendingGame is the next id
+  // that lishogi has sent via SSE `featured` but we haven't committed yet.
+  const finishedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (clocks.finished) {
+      finishedAtRef.current = finishedAtRef.current ?? Date.now();
+    } else {
+      finishedAtRef.current = null;
+    }
+  }, [clocks.finished]);
+  useEffect(() => {
+    if (!clocks.finished || !tv.pendingGame) return;
+    const elapsed = finishedAtRef.current ? Date.now() - finishedAtRef.current : 0;
+    const remaining = Math.max(0, 5000 - elapsed);
+    const t = window.setTimeout(() => tv.applyPendingNow(), remaining);
+    return () => window.clearTimeout(t);
+  }, [clocks.finished, tv.pendingGame, tv.applyPendingNow]);
+
   // Preserve the user's scroll position across game changes. The TV switch causes a layout
   // shrink that cascades through several React commits (gameSeq → INITIAL clocks → empty
   // engine snapshot → eventually the new game's data lands). On short viewports — iPhone

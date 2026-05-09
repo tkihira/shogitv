@@ -4,6 +4,14 @@ import { startTvFeed, type TvEvent, type TvFeaturedPlayer } from "../feed/tvFeed
 import { fetchInitialPosition } from "../feed/replayMoves";
 import { fetchGameInfo, type GamePlayer } from "../feed/gameInfo";
 
+export type PendingGame = {
+  id: string;
+  sfen: string | null;
+  lm: string | null;
+  sente: TvFeaturedPlayer | null;
+  gote: TvFeaturedPlayer | null;
+};
+
 export type TvState = {
   status: "connecting" | "open" | "closed";
   gameId: string | null;
@@ -18,6 +26,10 @@ export type TvState = {
   /** Wall-clock time of the most recent SSE-driven sfen update, used by useClocks to
    * detect "zombie" SSE connections (export shows new moves that SSE hasn't delivered). */
   sfenAt: number | null;
+  /** Next game queued by an SSE `featured` event but not yet swapped in. The owner of this
+   * hook decides when to commit it (e.g. App.tsx waits 5s after the current game finishes
+   * so the user has time to read the result banner). */
+  pendingGame: PendingGame | null;
 };
 
 export type TvControls = {
@@ -26,6 +38,8 @@ export type TvControls = {
   /** Apply an externally-derived sfen+lm — used when useClocks's polling pulls ahead of
    * the SSE feed and we replay moves to catch up. */
   applyRecovery: (gameId: string, sfen: string, lm: string | null) => void;
+  /** Commit the pending game switch (if any). Idempotent; no-op when nothing is pending. */
+  applyPendingNow: () => void;
 };
 
 const INITIAL: TvState = {
@@ -38,6 +52,7 @@ const INITIAL: TvState = {
   gameSeq: 0,
   posSeq: 0,
   sfenAt: null,
+  pendingGame: null,
 };
 
 function pickColor(players: TvFeaturedPlayer[] | undefined, color: "sente" | "gote"): TvFeaturedPlayer | null {
@@ -61,9 +76,16 @@ export function useTvFeed(): TvState & TvControls {
   const [state, setState] = useState<TvState>(INITIAL);
   const lastGameIdRef = useRef<string | null>(null);
   const feedRef = useRef<{ forceReconnect: () => void } | null>(null);
+  // Side-effect helpers (player + initial position fetch) need an AbortController scoped to
+  // the hook lifetime; expose it via ref so applyPendingNow (defined below the effect) can use it.
+  const acRef = useRef<AbortController | null>(null);
+  const commitGameSwitchRef = useRef<((g: PendingGame) => void) | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     const ac = new AbortController();
+    acRef.current = ac;
 
     // Fetch /api/game/{id} for both player names + ratings; populate state if we still
     // have nothing for that color (don't clobber a featured event payload that did carry
@@ -80,6 +102,38 @@ export function useTvFeed(): TvState & TvControls {
         };
       });
     };
+
+    // Apply a queued PendingGame to the live state. Used both immediately on the very first
+    // game (no current game to defer behind) and later when applyPendingNow is invoked.
+    const commitGameSwitch = (g: PendingGame) => {
+      lastGameIdRef.current = g.id;
+      setState((s) => ({
+        ...s,
+        gameId: g.id,
+        sfen: g.sfen,
+        lm: g.lm,
+        sente: g.sente,
+        gote: g.gote,
+        gameSeq: s.gameSeq + 1,
+        pendingGame: null,
+      }));
+      // Even if the featured payload didn't carry an sfen, derive the current position so
+      // the board doesn't go blank between the switch and the next move.
+      if (!g.sfen) {
+        void fetchInitialPosition(g.id, ac.signal)
+          .then((initial) => {
+            if (!initial) return;
+            setState((s) => {
+              if (s.gameId !== g.id || s.sfen) return s;
+              return { ...s, sfen: initial.sfen, lm: initial.lm, sfenAt: Date.now() };
+            });
+          })
+          .catch(() => {});
+      }
+      // Populate player names from /api/game/{id} in case the featured payload didn't.
+      void populatePlayers(g.id);
+    };
+    commitGameSwitchRef.current = commitGameSwitch;
 
     // Best-effort initial channel fetch to populate player names + a snapshot of the
     // current position by replaying the move list — without this, the board stays empty
@@ -128,34 +182,23 @@ export function useTvFeed(): TvState & TvControls {
             players?: TvFeaturedPlayer[];
           };
           if (d.id === lastGameIdRef.current) return;
-          lastGameIdRef.current = d.id;
-          // Only bump gameSeq here — bumping posSeq too would race the gameSeq-driven
-          // /api/game fetch (which carries player names) against the posSeq-driven sync
-          // that aborts it. Subsequent SSE sfen events will naturally bump posSeq.
-          setState((s) => ({
-            ...s,
-            gameId: d.id,
+          if (stateRef.current.pendingGame?.id === d.id) return; // already queued
+          const incoming: PendingGame = {
+            id: d.id,
             sfen: d.sfen ?? null,
             lm: null,
             sente: pickColor(d.players, "sente"),
             gote: pickColor(d.players, "gote"),
-            gameSeq: s.gameSeq + 1,
-          }));
-          // Even if the featured payload doesn't carry an sfen, derive the current
-          // position so the board doesn't go blank between the switch and the next move.
-          if (!d.sfen) {
-            void fetchInitialPosition(d.id, ac.signal)
-              .then((initial) => {
-                if (!initial) return;
-                setState((s) => {
-                  if (s.gameId !== d.id || s.sfen) return s;
-                  return { ...s, sfen: initial.sfen, lm: initial.lm, sfenAt: Date.now() };
-                });
-              })
-              .catch(() => {});
+          };
+          // First-ever game (initial load via SSE alone) → apply immediately. Subsequent
+          // featured events stock the next game as pending; the consumer (App.tsx) commits
+          // it via applyPendingNow once the current game has been finished long enough for
+          // the user to read the result banner.
+          if (lastGameIdRef.current === null) {
+            commitGameSwitchRef.current?.(incoming);
+          } else {
+            setState((s) => ({ ...s, pendingGame: incoming }));
           }
-          // Populate player names from /api/game/{id} in case the featured payload didn't.
-          void populatePlayers(d.id);
         }
       },
     });
@@ -180,6 +223,11 @@ export function useTvFeed(): TvState & TvControls {
       return { ...s, sfen, lm, posSeq: s.posSeq + 1, sfenAt: Date.now() };
     });
   };
+  const applyPendingNow = () => {
+    const pending = stateRef.current.pendingGame;
+    if (!pending) return;
+    commitGameSwitchRef.current?.(pending);
+  };
 
-  return { ...state, forceReconnect, applyRecovery };
+  return { ...state, forceReconnect, applyRecovery, applyPendingNow };
 }
