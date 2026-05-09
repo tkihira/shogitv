@@ -198,13 +198,15 @@ export function useClocks(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.posSeq]);
 
-  // Trigger 3: 5s safety net — re-sync to catch end-of-game (especially 切れ負け, which never
-  // emits an sfen event) before the lishogi TV switches to the next game (~5-15s after end).
+  // Trigger 3: 30s safety net — re-sync to catch slow drift / SSE going zombie. End-of-game
+  // detection (切れ負け in particular) is no longer this interval's job; the clock-zero
+  // trigger below handles that more cheaply. Higher interval keeps the per-viewer request
+  // rate down to ~2 req/min, well inside lishogi's "reasonable" load.
   useEffect(() => {
     if (!args.gameId) return;
     const id = window.setInterval(() => {
       if (gameIdRef.current) void sync(gameIdRef.current, "interval");
-    }, 5_000);
+    }, 30_000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.gameId]);
@@ -230,6 +232,30 @@ export function useClocks(args: {
     }, 1000);
     return () => window.clearInterval(id);
   }, [state.turn, state.finished]);
+
+  // Trigger 4: when the active player's clock hits 0 in our local model, do an immediate
+  // sync — the server can confirm 切れ負け right away instead of waiting for the next 30s
+  // safety-net tick. Fires once per zero-transition (a flag resets when the clock starts
+  // ticking again on a new move).
+  const ranOutFiredRef = useRef(false);
+  useEffect(() => {
+    if (state.finished || !state.turn) {
+      ranOutFiredRef.current = false;
+      return;
+    }
+    const active = state.turn === "sente" ? state.sente : state.gote;
+    if (!active) return;
+    const exhausted =
+      active.mainMs <= 0 &&
+      (active.byoyomiPeriodsLeft <= 0 || active.byoyomiMs <= 0);
+    if (exhausted && !ranOutFiredRef.current) {
+      ranOutFiredRef.current = true;
+      if (gameIdRef.current) void sync(gameIdRef.current, "interval");
+    } else if (!exhausted) {
+      ranOutFiredRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.turn, state.finished, state.sente, state.gote]);
 
   return state;
 }
