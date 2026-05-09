@@ -11,6 +11,30 @@
          notably GitHub Pages. The SW registers, then reloads the page once so the next load
          is cross-origin isolated. -->
     <script src="./coi-serviceworker.js"></script>
+    <!-- iOS Safari sometimes leaves the SW in a half-broken state across reloads (registered
+         but not controlling, or vice-versa) where crossOriginIsolated stays false and the
+         engine fails with "Can't find variable: SharedArrayBuffer". Recover by unregistering
+         all SWs and reloading; bounded by sessionStorage so we don't loop forever. Closing
+         the tab also clears it but is a worse UX. -->
+    <script>
+      (function () {
+        if (typeof SharedArrayBuffer !== 'undefined') {
+          sessionStorage.removeItem('coi-recovery');
+          return;
+        }
+        var tries = parseInt(sessionStorage.getItem('coi-recovery') || '0', 10);
+        if (tries >= 3) return; // give up; let the app render the engine-error banner
+        sessionStorage.setItem('coi-recovery', String(tries + 1));
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function (regs) {
+            Promise.all(regs.map(function (r) { return r.unregister(); }))
+              .then(function () { location.reload(); });
+          });
+        } else {
+          location.reload();
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
