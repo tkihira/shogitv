@@ -15,6 +15,17 @@ export type TvState = {
   gameSeq: number;
   /** Monotonic counter that increments on every position update. */
   posSeq: number;
+  /** Wall-clock time of the most recent SSE-driven sfen update, used by useClocks to
+   * detect "zombie" SSE connections (export shows new moves that SSE hasn't delivered). */
+  sfenAt: number | null;
+};
+
+export type TvControls = {
+  /** Force the SSE EventSource to reconnect (recovery from zombie connections). */
+  forceReconnect: () => void;
+  /** Apply an externally-derived sfen+lm — used when useClocks's polling pulls ahead of
+   * the SSE feed and we replay moves to catch up. */
+  applyRecovery: (gameId: string, sfen: string, lm: string | null) => void;
 };
 
 const INITIAL: TvState = {
@@ -26,6 +37,7 @@ const INITIAL: TvState = {
   gote: null,
   gameSeq: 0,
   posSeq: 0,
+  sfenAt: null,
 };
 
 function pickColor(players: TvFeaturedPlayer[] | undefined, color: "sente" | "gote"): TvFeaturedPlayer | null {
@@ -45,9 +57,10 @@ function fromGameInfo(p: GamePlayer | undefined): TvFeaturedPlayer | null {
   return { user: { id, name, title: p.user?.title }, rating: p.rating, ai: p.ai };
 }
 
-export function useTvFeed(): TvState {
+export function useTvFeed(): TvState & TvControls {
   const [state, setState] = useState<TvState>(INITIAL);
   const lastGameIdRef = useRef<string | null>(null);
+  const feedRef = useRef<{ forceReconnect: () => void } | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -84,7 +97,9 @@ export function useTvFeed(): TvState {
           fetchInitialPosition(std.gameId, ac.signal)
             .then((initial) => {
               if (!initial) return;
-              setState((s) => (s.sfen ? s : { ...s, sfen: initial.sfen, lm: initial.lm }));
+              setState((s) =>
+                s.sfen ? s : { ...s, sfen: initial.sfen, lm: initial.lm, sfenAt: Date.now() },
+              );
             })
             .catch(() => {}),
           populatePlayers(std.gameId),
@@ -94,12 +109,18 @@ export function useTvFeed(): TvState {
         // Non-fatal; the SSE feed will eventually carry a featured event.
       });
 
-    const stop = startTvFeed({
+    const feed = startTvFeed({
       onStatus: (status) => setState((s) => ({ ...s, status })),
       onEvent: (ev: TvEvent) => {
         if (ev.t === "sfen") {
           const d = ev.d as { sfen: string; lm?: string };
-          setState((s) => ({ ...s, sfen: d.sfen, lm: d.lm ?? null, posSeq: s.posSeq + 1 }));
+          setState((s) => ({
+            ...s,
+            sfen: d.sfen,
+            lm: d.lm ?? null,
+            posSeq: s.posSeq + 1,
+            sfenAt: Date.now(),
+          }));
         } else if (ev.t === "featured") {
           const d = ev.d as {
             id: string;
@@ -128,7 +149,7 @@ export function useTvFeed(): TvState {
                 if (!initial) return;
                 setState((s) => {
                   if (s.gameId !== d.id || s.sfen) return s;
-                  return { ...s, sfen: initial.sfen, lm: initial.lm };
+                  return { ...s, sfen: initial.sfen, lm: initial.lm, sfenAt: Date.now() };
                 });
               })
               .catch(() => {});
@@ -139,11 +160,26 @@ export function useTvFeed(): TvState {
       },
     });
 
+    feedRef.current = feed;
     return () => {
       ac.abort();
-      stop();
+      feed.stop();
+      feedRef.current = null;
     };
   }, []);
 
-  return state;
+  const forceReconnect = () => {
+    feedRef.current?.forceReconnect();
+  };
+  const applyRecovery = (gameId: string, sfen: string, lm: string | null) => {
+    setState((s) => {
+      // Don't overwrite if the user has already moved on to a different game.
+      if (s.gameId !== gameId) return s;
+      // Don't overwrite if SSE has already delivered a fresher sfen than what we're recovering.
+      if (s.sfen === sfen) return s;
+      return { ...s, sfen, lm, posSeq: s.posSeq + 1, sfenAt: Date.now() };
+    });
+  };
+
+  return { ...state, forceReconnect, applyRecovery };
 }

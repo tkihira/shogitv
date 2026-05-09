@@ -8,6 +8,7 @@ import { useTvFeed } from "./hooks/useTvFeed";
 import { useEngine } from "./hooks/useEngine";
 import { useClocks } from "./hooks/useClocks";
 import type { TvFeaturedPlayer } from "./feed/tvFeed";
+import { fetchInitialPosition } from "./feed/replayMoves";
 
 export default function App() {
   const tv = useTvFeed();
@@ -16,6 +17,18 @@ export default function App() {
     gameSeq: tv.gameSeq,
     posSeq: tv.posSeq,
     sfen: tv.sfen,
+    sfenAt: tv.sfenAt,
+    onSseLag: (gameId) => {
+      // SSE went silent while the game advanced. Force-reconnect AND patch in the missed
+      // position via /game/export so the user sees the latest state without waiting for
+      // the next move to wake the SSE up.
+      tv.forceReconnect();
+      void fetchInitialPosition(gameId)
+        .then((p) => {
+          if (p) tv.applyRecovery(gameId, p.sfen, p.lm);
+        })
+        .catch(() => {});
+    },
   });
   const { state: engine, analyze, newGame } = useEngine();
   const [orientation, setOrientation] = useState<"sente" | "gote">("sente");

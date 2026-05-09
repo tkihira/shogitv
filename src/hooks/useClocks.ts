@@ -90,6 +90,11 @@ export function useClocks(args: {
   gameSeq: number;
   posSeq: number;
   sfen: string | null;
+  /** Wall-clock time of the most recent SSE-driven sfen update; used to detect SSE lag. */
+  sfenAt: number | null;
+  /** Called when the export pulls ahead of the SSE feed (zombie connection); the parent
+   * should force-reconnect and apply the fresher position. */
+  onSseLag?: (gameId: string, lastPly: number) => void;
 }): UseClocksState {
   const [state, setState] = useState<UseClocksState>(INITIAL);
   const lastSeenGameSeqRef = useRef<number>(-1);
@@ -97,6 +102,10 @@ export function useClocks(args: {
   const lastFetchAtRef = useRef<number>(0);
   const inFlightRef = useRef<AbortController | null>(null);
   const gameIdRef = useRef<string | null>(null);
+  const onSseLagRef = useRef(args.onSseLag);
+  onSseLagRef.current = args.onSseLag;
+  const sfenAtRef = useRef(args.sfenAt);
+  sfenAtRef.current = args.sfenAt;
 
   const sync = async (gameId: string, reason: "game-change" | "sfen" | "interval") => {
     // Throttle "interval" only — every sfen event must fetch (otherwise the very last move,
@@ -116,6 +125,7 @@ export function useClocks(args: {
       ]);
       if (gameIdRef.current !== gameId) return; // game switched while in flight
       const built = buildFromExport(exp, info);
+      let advanced = false;
       setState((s) => {
         // If no new move was played and the game hasn't ended, the export carries no fresh
         // clock authority — keep the locally-ticking clocks. Otherwise byoyomi resets to its
@@ -124,6 +134,9 @@ export function useClocks(args: {
         const moveAdvanced = exp.lastPly > s.plies;
         const justFinished = exp.finished && !s.finished;
         const firstSync = s.syncMs === null;
+        // Track for the post-setState SSE-lag check. Don't flag firstSync — at startup the
+        // export will of course be ahead of our empty state.
+        if (moveAdvanced && !firstSync) advanced = true;
         if (!moveAdvanced && !justFinished && !firstSync) {
           return { ...s, loading: false };
         }
@@ -144,6 +157,19 @@ export function useClocks(args: {
           winner: exp.winner ?? null,
         };
       });
+      // SSE lag detection: the export saw a new move; if the SSE feed hasn't delivered an
+      // sfen recently (or hasn't delivered any since startup), it has gone zombie. Tell the
+      // parent so it can force-reconnect and patch in the missed position. Threshold of
+      // 12s is permissive enough to avoid false positives in blitz games (where SSE may
+      // deliver shortly after our 5-second polling tick) while still catching real zombies
+      // that are typically silent for 30s+.
+      if (advanced && !exp.finished) {
+        const sfenAt = sfenAtRef.current ?? 0;
+        const sinceLastSse = sfenAt > 0 ? Date.now() - sfenAt : Infinity;
+        if (sinceLastSse > 12_000) {
+          onSseLagRef.current?.(gameId, exp.lastPly);
+        }
+      }
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
       // Soft-fail: keep showing previous state.

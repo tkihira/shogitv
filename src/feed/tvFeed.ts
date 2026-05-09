@@ -27,9 +27,16 @@ export type TvFeedHandlers = {
   onStatus?: (status: "connecting" | "open" | "closed") => void;
 };
 
+export type TvFeedHandle = {
+  stop: () => void;
+  /** Close the current EventSource and immediately reconnect — used to recover from
+   * "zombie" SSE connections that go silent without firing onerror. */
+  forceReconnect: () => void;
+};
+
 const FEED_URL = "https://lishogi.org/api/tv/feed";
 
-export function startTvFeed(handlers: TvFeedHandlers): () => void {
+export function startTvFeed(handlers: TvFeedHandlers): TvFeedHandle {
   let es: EventSource | null = null;
   let stopped = false;
   let backoffMs = 1000;
@@ -63,10 +70,23 @@ export function startTvFeed(handlers: TvFeedHandlers): () => void {
   };
 
   connect();
-  return () => {
-    stopped = true;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    es?.close();
-    es = null;
+  return {
+    stop: () => {
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      es?.close();
+      es = null;
+    },
+    forceReconnect: () => {
+      if (stopped) return;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      es?.close();
+      es = null;
+      backoffMs = 1000; // recovery attempt — start fresh, don't punish with backoff
+      connect();
+    },
   };
 }
