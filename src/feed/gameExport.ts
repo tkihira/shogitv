@@ -57,6 +57,11 @@ const RE_MOVE = /^\s*(\d+)\s+\S.*?\((\d+):(\d+)\/(\d+):(\d+):(\d+)\)\s*$/;
 // switch fires — anything new lishogi adds in the future falls through to "unknown"
 // rather than causing the TV to freeze on a long-finished game.
 const RE_END = /^\s*(\d+)\s+(\S.*?)\s*$/;
+// Summary line: "まで101手で先手の勝ち" / "まで150手で持将棋" / "まで66手で千日手" /
+// "まで100手で引き分け". Some KIF outputs (notably checkmate where the mating move is
+// just a normal move) only carry this trailing summary with no explicit "<ply> <label>"
+// terminator, so we fall back to it when RE_END doesn't fire.
+const RE_SUMMARY = /^まで(\d+)手で(.+?)\s*$/;
 
 function parseEndStatus(raw: string): EndStatus {
   if (raw === "投了") return "resign";
@@ -78,7 +83,11 @@ export function parseKif(text: string): GameExport {
   let goteUsedMs = 0;
   let lastPly = 0;
   let finished = false;
-  let endStatusRaw: string | undefined;
+  // From an explicit "<ply> <label>" terminator line (RE_END).
+  let endLineLabel: string | undefined;
+  // From the trailing "まで<ply>手で<...>" summary line (RE_SUMMARY).
+  let summaryStatus: string | undefined;
+  let summaryWinner: "sente" | "gote" | undefined;
 
   for (const line of text.split(/\r?\n/)) {
     const tm = line.match(RE_TIME);
@@ -101,13 +110,37 @@ export function parseKif(text: string): GameExport {
       else goteUsedMs = cumulativeMs;
       continue;
     }
-    const em = line.match(RE_END);
-    if (em) {
-      lastPly = parseInt(em[1], 10);
-      endStatusRaw = em[2];
+    // Summary check first — RE_END is permissive and could otherwise swallow it.
+    const sm = line.match(RE_SUMMARY);
+    if (sm) {
+      const ply = parseInt(sm[1], 10);
+      if (ply > lastPly) lastPly = ply;
+      summaryStatus = sm[2];
+      if (sm[2] === "先手の勝ち") summaryWinner = "sente";
+      else if (sm[2] === "後手の勝ち") summaryWinner = "gote";
       finished = true;
       continue;
     }
+    const em = line.match(RE_END);
+    if (em) {
+      lastPly = parseInt(em[1], 10);
+      endLineLabel = em[2];
+      finished = true;
+      continue;
+    }
+  }
+
+  // Pick the most informative end label we found.
+  let endStatusRaw: string | undefined;
+  if (endLineLabel) {
+    endStatusRaw = endLineLabel;
+  } else if (summaryStatus) {
+    // Summary-only case: a winner-summary ("X の勝ち") with no explicit terminator
+    // is overwhelmingly checkmate (resign / outoftime / declaration always carry
+    // their own end-line). Synthesise "詰み" for those; otherwise pass the raw
+    // summary text through (引き分け / 千日手 / 持将棋 / etc.).
+    if (summaryWinner) endStatusRaw = "詰み";
+    else endStatusRaw = summaryStatus;
   }
 
   // Sente plays odd plies (1, 3, 5, …); gote plays even plies (2, 4, 6, …).
@@ -119,16 +152,20 @@ export function parseKif(text: string): GameExport {
   const turnAfterMoves: "sente" | "gote" = lastPly % 2 === 0 ? "sente" : "gote";
 
   let winner: "sente" | "gote" | undefined;
-  if (finished && endStatusRaw) {
-    if (endStatusRaw === "投了" || endStatusRaw === "切れ負け" || endStatusRaw === "詰み") {
-      // The lastPly is the would-be move of the side who DIDN'T play (resigned /
-      // ran out / got mated). They're the loser; the other side wins.
+  if (finished) {
+    if (endLineLabel === "投了" || endLineLabel === "切れ負け" || endLineLabel === "詰み") {
+      // Explicit end-line: the lastPly is the would-be move of the side who DIDN'T
+      // play (resigned / ran out / got mated). They're the loser; the other wins.
       const loser: "sente" | "gote" = lastPly % 2 === 1 ? "sente" : "gote";
       winner = loser === "sente" ? "gote" : "sente";
-    } else if (endStatusRaw.startsWith("入玉宣言")) {
+    } else if (endLineLabel?.startsWith("入玉宣言")) {
       // Entering-king declaration: the declarer is the side whose turn it was
       // and they win outright by declaring instead of moving.
       winner = lastPly % 2 === 1 ? "sente" : "gote";
+    } else if (summaryWinner) {
+      // Summary-only fallback (e.g. mate where the mating move IS the lastPly so
+      // the parity heuristic above would invert): trust the explicit "X の勝ち".
+      winner = summaryWinner;
     }
     // 引き分け / 中断 / 反則 / 千日手 / 持将棋 / unknown: leave winner undefined.
   }
