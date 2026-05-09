@@ -1,4 +1,4 @@
-# shogi tv
+# Shogi TV
 
 [lishogi](https://lishogi.org/tv) で配信中の注目対局を観戦しながら、**ブラウザの中で動く WASM 将棋エンジン (YaneuraOu)** がリアルタイムに評価値・候補手・読み筋を計算してくれる Web アプリです。サーバを介さずにすべてブラウザ単独で完結します。
 
@@ -47,52 +47,6 @@
 - **USI プロトコル**: `usi` / `isready` / `position sfen ... 1` / `go movetime 1500` / `stop` を main ↔ worker 間 postMessage で会話
 - **MultiPV=3** で主候補手・次善手・第三候補を同時計算
 
-### COOP/COEP / SharedArrayBuffer
-
-YaneuraOu.wasm は SharedArrayBuffer (= マルチスレッド) を要求するため、ページが [crossOriginIsolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated) でなければ動きません。
-
-- **dev**: `vite.config.ts` の `server.headers` で `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` を付与
-- **prod (Vercel)**: `vercel.json` の `headers` で同じ 2 ヘッダを `/(.*)` に当てる。エンジン本体 (`/engine/*`) と Vite ハッシュ付きアセット (`/assets/*`) は immutable キャッシュ
-
-### ロバスト性
-
-- **SSE ゾンビ接続検知**: `/api/tv/feed` の SSE が無音でハングする現象を検出するため、`useClocks` の 5 秒ポーリングが「export では新しい手が見えるのに SSE は 12 秒以上沈黙」と判定したら **強制再接続 + リプレイで局面復旧**
-- **対局切替時のスクロール位置保持**: TV 切替で DOM が一時収縮することによりブラウザがスクロール位置をクランプして「先頭に戻る」現象を、`useLayoutEffect` cleanup でスクロール Y を保存 + 0/50/150/350/700ms の rAF で復元
-- **iOS Safari の駒ずれ修正**: shogiground が二重に `.sg-wrap` クラスを付与する挙動 + サブピクセル計算のずれで、右側の駒ほど左にずれる現象を、CSS の `round(down, …, 9px)` で盤の cell 幅を整数 px にスナップして解消
-
-### ライブラリ構成図
-
-```
-┌────────────────────────────────────────────────────┐
-│ Browser                                            │
-│                                                    │
-│  ┌─────────────────────────────────────────────┐   │
-│  │ React (Vite, TS)                            │   │
-│  │  ├ useTvFeed   ←  SSE /api/tv/feed          │   │
-│  │  ├ useClocks   ←  /game/export/{id}?clocks=1│   │
-│  │  ├ useEngine   →  Worker (USI postMessage)  │   │
-│  │  └ Components: Board, Clocks, EvalBar,      │   │
-│  │                EvalScore, GameHeader …      │   │
-│  └─────────────────────────────────────────────┘   │
-│                          ↓                         │
-│  ┌──────────────────────────┐                       │
-│  │ Engine Worker            │                       │
-│  │  worker-host.js          │                       │
-│  │   └ YaneuraOu.wasm       │                       │
-│  │     (MultiPV=3, threads) │                       │
-│  └──────────────────────────┘                       │
-└────────────────────────────────────────────────────┘
-       ↓ HTTP / SSE
-┌────────────────────────────────────────────────────┐
-│ lishogi.org                                        │
-│   /api/tv/feed              ← SSE (sfen, featured) │
-│   /api/tv/channels          ← 注目対局 ID          │
-│   /api/game/{id}            ← player + clock 設定  │
-│   /game/export/{id}?clocks=1 ← KIF (消費時間)      │
-│   /game/export/{id}          ← JSON (moves)        │
-└────────────────────────────────────────────────────┘
-```
-
 ## ローカル開発
 
 ```sh
@@ -119,51 +73,6 @@ CLI で手動デプロイする場合:
 
 ```sh
 npx vercel --prod
-```
-
-iPhone 等の他端末から開く場合は `npm run dev` 起動時に出る Network URL (`https://<IP>:<PORT>/`) を打ち、自己署名証明書の警告を一度承認してください。
-
-### ディレクトリ構成
-
-```
-shogitv/
-├ public/
-│  ├ favicon.svg
-│  └ engine/                   ← scripts/copy-engine.mjs が自動コピー
-│     ├ worker-host.js          (手書き、エンジン用 Web Worker)
-│     ├ yaneuraou.k-p.js        (npm パッケージから)
-│     ├ yaneuraou.k-p.wasm
-│     └ yaneuraou.k-p.worker.js
-├ scripts/
-│  └ copy-engine.mjs           ← npm 起動時に engine/ を public/ に同期
-├ src/
-│  ├ App.tsx
-│  ├ main.tsx
-│  ├ index.css                 ← 全 CSS
-│  ├ components/
-│  │  ├ Board.tsx              (shogiground ラッパ)
-│  │  ├ Clocks.tsx             (ClockRow, ClockMeta, GameResultBanner)
-│  │  ├ EvalBar.tsx            (盤の隣の縦バー)
-│  │  ├ EvalScore.tsx          (評価値 + 3 PV リスト)
-│  │  └ GameHeader.tsx
-│  ├ engine/
-│  │  ├ engineClient.ts        (Worker との USI 会話)
-│  │  ├ pvNotation.ts          (USI 列 → 日本語棋譜変換)
-│  │  └ usi.ts                 (info 行パーサ)
-│  ├ feed/
-│  │  ├ tvFeed.ts              (SSE クライアント)
-│  │  ├ tvChannels.ts          (/api/tv/channels)
-│  │  ├ gameInfo.ts            (/api/game/{id})
-│  │  ├ gameExport.ts          (KIF パース)
-│  │  └ replayMoves.ts         (USI list → SFEN)
-│  └ hooks/
-│     ├ useTvFeed.ts
-│     ├ useClocks.ts
-│     └ useEngine.ts
-├ index.html                   ← OGP, 旧 SW のクリーンアップスクリプト
-├ vite.config.ts
-├ vercel.json                  ← COOP/COEP ヘッダ + immutable キャッシュ
-└ LICENSE                      ← GNU GPL-3.0
 ```
 
 ## ライセンス
