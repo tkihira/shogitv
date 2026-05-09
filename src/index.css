@@ -193,6 +193,17 @@ button {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+.clock-row .time.win,
+.clock-row .time.loss {
+  font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
+  font-variant-numeric: normal;
+}
+.clock-row .time.win {
+  color: var(--accent);
+}
+.clock-row .time.loss {
+  color: var(--warn);
+}
 .clock-meta {
   display: flex;
   align-items: center;
