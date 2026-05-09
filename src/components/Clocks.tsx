@@ -4,18 +4,36 @@ import {
   type Color,
   type UseClocksState,
 } from "../hooks/useClocks";
+import type { TvFeaturedPlayer } from "../feed/tvFeed";
 
 function classNames(...xs: (string | false | undefined)[]) {
   return xs.filter(Boolean).join(" ");
 }
 
-export function ClockRow({ state, color }: { state: UseClocksState; color: Color }) {
+function playerName(p: TvFeaturedPlayer | null): string {
+  if (!p) return "?";
+  if (p.user) return p.user.title ? `${p.user.title} ${p.user.name}` : p.user.name;
+  if (p.ai) return `AI Lv.${p.ai}`;
+  return "?";
+}
+
+export function ClockRow({
+  state,
+  color,
+  player,
+}: {
+  state: UseClocksState;
+  color: Color;
+  player: TvFeaturedPlayer | null;
+}) {
   const c = color === "sente" ? state.sente : state.gote;
   const ticking = state.turn === color && !state.finished;
   if (state.initial === 0 && state.byoyomi === 0) return null;
   return (
     <div className={classNames("clock-row", color, ticking && "ticking")}>
       <span className="dot" />
+      <span className="player-name">{playerName(player)}</span>
+      {player?.rating ? <span className="rating">{player.rating}</span> : null}
       <span className="time">{formatRemaining(c)}</span>
     </div>
   );

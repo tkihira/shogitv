@@ -157,9 +157,27 @@ button {
   width: 10px;
   height: 10px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 .clock-row.sente .dot { background: #fff; border: 1px solid #888; }
 .clock-row.gote .dot { background: #111; border: 1px solid #888; }
+.clock-row .player-name {
+  /* Smaller than the time digits, allowed to truncate on tight viewports. */
+  font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
+  font-size: 0.7em;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.clock-row .rating {
+  font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
+  font-size: 0.6em;
+  font-weight: 400;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
 .clock-row .time {
   flex: 1;
   text-align: right;

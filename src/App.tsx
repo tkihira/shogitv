@@ -111,12 +111,20 @@ export default function App() {
       <GameHeader gameId={tv.gameId} sente={sente} gote={gote} feedStatus={tv.status} />
       <main className="layout">
         <div className="board-stack">
-          <ClockRow state={clocks} color={orientation === "sente" ? "gote" : "sente"} />
+          <ClockRow
+            state={clocks}
+            color={orientation === "sente" ? "gote" : "sente"}
+            player={orientation === "sente" ? gote : sente}
+          />
           <div className="board-with-bar">
             <Board sfen={tv.sfen} lm={tv.lm} orientation={orientation} />
             <EvalBar snapshot={engine.snapshot} />
           </div>
-          <ClockRow state={clocks} color={orientation} />
+          <ClockRow
+            state={clocks}
+            color={orientation}
+            player={orientation === "sente" ? sente : gote}
+          />
           <ClockMeta state={clocks} />
           <GameResultBanner state={clocks} />
           <button
