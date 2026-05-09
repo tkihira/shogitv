@@ -213,6 +213,18 @@ button {
   border-color: var(--accent);
 }
 
+/* === Board + eval bar row ===
+ * The eval bar lives directly to the right of the board+hands stack so the user always
+ * sees it next to the position. .board-stack centres this row. */
+.board-with-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  justify-content: center;
+}
+
 /* === Board area === */
 .board-area {
   display: flex;
@@ -223,11 +235,17 @@ button {
    * The visible board face = .board-area width − 4 px (the outer .sg-wrap's 2px border on
    * each side). Snap that face to a multiple of 9 px so cell widths are integer — without
    * the snap, accumulated translate(N00%) on each piece drifts on iOS Safari and the
-   * rightmost pieces shift left. */
+   * rightmost pieces shift left. Width-side limit also subtracts the eval bar (32 px) and
+   * gap (6 px) so the row fits inside the column. */
   --board-w: calc(
-    round(down, min(calc((100vh - 220px) / 12 * 9), 100%, 640px) - 4px, 9px) + 4px
+    round(down, min(
+      calc((100vh - 220px) / 12 * 9),
+      calc(100% - 38px),
+      640px
+    ) - 4px, 9px) + 4px
   );
   width: var(--board-w);
+  flex: 0 0 auto;
 }
 .hand {
   background: var(--panel);
@@ -474,27 +492,16 @@ counter,
   flex: 1 1 auto;
 }
 
-/* === Side panel === */
+/* === Side panel ===
+ * The eval bar moved out (now lives next to the board), so the side panel hosts only the
+ * eval score / PV list. */
 .side-panel {
-  display: grid;
-  grid-template-columns: 56px 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: stretch;
-}
-@media (max-width: 800px) and (orientation: portrait) {
-  .side-panel {
-    grid-template-columns: 1fr;
-  }
-}
-@media (max-width: 800px) and (orientation: landscape) {
-  .side-panel {
-    /* Tighten the eval-bar slot when the side column is narrow. */
-    grid-template-columns: 32px 1fr;
-    gap: 8px;
-  }
 }
 
-/* === Eval bar === */
+/* === Eval bar (vertical, sits next to the board) === */
 .eval-bar {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -504,7 +511,9 @@ counter,
   align-items: stretch;
   position: relative;
   overflow: hidden;
-  min-height: 200px;
+  /* Stretches to match .board-area's height via flex align-items:stretch on the parent. */
+  width: 32px;
+  flex: 0 0 32px;
 }
 .eval-bar.idle .bar-track,
 .eval-bar.idle .bar-label {
@@ -533,34 +542,6 @@ counter,
   padding: 4px 0;
   background: var(--panel);
   border-top: 1px solid var(--border);
-}
-/* Portrait-only mobile: bar lays out horizontally below the board (this override must come
- * after the base rules so its declarations win the cascade). Landscape keeps the desktop
- * vertical bar so the side panel is dominated by the engine PV list. */
-@media (max-width: 800px) and (orientation: portrait) {
-  .eval-bar {
-    min-height: 32px;
-    flex-direction: row;
-  }
-  .eval-bar .bar-track {
-    flex: 1;
-  }
-  .eval-bar .bar-fill.sente {
-    /* Horizontal bar (mobile portrait): white grows leftward from the right edge as sente% increases. */
-    top: 0;
-    bottom: 0;
-    right: 0;
-    left: auto;
-    height: auto;
-    width: var(--sente-pct, 50%);
-  }
-  .eval-bar .bar-label {
-    border-top: none;
-    border-left: 1px solid var(--border);
-    padding: 0 12px;
-    display: flex;
-    align-items: center;
-  }
 }
 
 /* === Eval score === */
@@ -679,10 +660,15 @@ counter,
     gap: 2px;
   }
   /* Maximize board: reduce the height reservation and use the 11/12 aspect. Snap so that
-   * the inner face (board-w − 4px outer border) is a multiple of 9. */
+   * the inner face (board-w − 4px outer border) is a multiple of 9, and leave room for
+   * the eval bar (32 px + 6 px gap). */
   .board-area {
     --board-w: calc(
-      round(down, min(calc((100vh - 130px) / 12 * 11), 100%, 640px) - 4px, 9px) + 4px
+      round(down, min(
+        calc((100vh - 130px) / 12 * 11),
+        calc(100% - 38px),
+        640px
+      ) - 4px, 9px) + 4px
     );
   }
   /* Compact clocks. */

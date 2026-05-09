@@ -112,7 +112,10 @@ export default function App() {
       <main className="layout">
         <div className="board-stack">
           <ClockRow state={clocks} color={orientation === "sente" ? "gote" : "sente"} />
-          <Board sfen={tv.sfen} lm={tv.lm} orientation={orientation} />
+          <div className="board-with-bar">
+            <Board sfen={tv.sfen} lm={tv.lm} orientation={orientation} />
+            <EvalBar snapshot={engine.snapshot} />
+          </div>
           <ClockRow state={clocks} color={orientation} />
           <ClockMeta state={clocks} />
           <GameResultBanner state={clocks} />
@@ -126,7 +129,6 @@ export default function App() {
           </button>
         </div>
         <aside className="side-panel">
-          <EvalBar snapshot={engine.snapshot} />
           <EvalScore
             snapshot={engine.snapshot}
             status={engine.status}
