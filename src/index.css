@@ -172,9 +172,8 @@ button {
 .clock-row.sente .dot { background: #fff; border: 1px solid #888; }
 .clock-row.gote .dot { background: #111; border: 1px solid #888; }
 .clock-row .player-name {
-  /* Take the leftover horizontal space (so time + result push to the right) and ellipse
-   * any overflow rather than wrap. */
-  flex: 1;
+  /* Sits next to the dot at content width, but ellipses if it would otherwise push the
+   * time + result off the row. */
   font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
   font-size: 0.7em;
   font-weight: 600;
@@ -191,6 +190,9 @@ button {
   flex-shrink: 0;
 }
 .clock-row .time {
+  /* margin-left:auto pushes the time + result cluster to the right edge while the dot,
+   * name, and rating stay grouped on the left. */
+  margin-left: auto;
   text-align: right;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
