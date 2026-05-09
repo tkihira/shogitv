@@ -24,6 +24,9 @@ const STATUS_LABEL: Record<string, string> = {
   draw: "引き分け",
   aborted: "中断",
   illegal: "反則",
+  repetition: "千日手",
+  impasse: "持将棋",
+  entering: "入玉宣言",
   unknown: "終局",
 };
 

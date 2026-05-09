@@ -12,6 +12,9 @@ export type EndStatus =
   | "draw"
   | "aborted"
   | "illegal"
+  | "repetition" // 千日手
+  | "impasse" // 持将棋
+  | "entering" // 入玉宣言勝ち
   | "unknown";
 
 export type GameExport = {
@@ -48,8 +51,12 @@ export async function fetchGameExport(gameId: string, signal?: AbortSignal): Pro
 const RE_TIME = /持ち時間：(\d+)分(?:\+(\d+)秒)?/;
 // "  103   ４四龍(54)   (00:08/00:04:22)"
 const RE_MOVE = /^\s*(\d+)\s+\S.*?\((\d+):(\d+)\/(\d+):(\d+):(\d+)\)\s*$/;
-// "  104   投了" or "  96   切れ負け" or "詰み" / "反則勝ち" / "引き分け" / "中断"
-const RE_END = /^\s*(\d+)\s+(投了|切れ負け|詰み|引き分け|中断|反則[^\s]*)\s*$/;
+// "  104   投了" / "  96   切れ負け" / "詰み" / "反則勝ち" / "引き分け" / "中断" /
+// "千日手" / "持将棋" / "入玉宣言勝ち" / etc. We deliberately match *any* non-clock
+// label here so unrecognised endings still set finished=true and the deferred game
+// switch fires — anything new lishogi adds in the future falls through to "unknown"
+// rather than causing the TV to freeze on a long-finished game.
+const RE_END = /^\s*(\d+)\s+(\S.*?)\s*$/;
 
 function parseEndStatus(raw: string): EndStatus {
   if (raw === "投了") return "resign";
@@ -57,6 +64,9 @@ function parseEndStatus(raw: string): EndStatus {
   if (raw === "詰み") return "mate";
   if (raw === "引き分け") return "draw";
   if (raw === "中断") return "aborted";
+  if (raw === "千日手" || raw.includes("千日手")) return "repetition";
+  if (raw === "持将棋") return "impasse";
+  if (raw.startsWith("入玉宣言")) return "entering";
   if (raw.startsWith("反則")) return "illegal";
   return "unknown";
 }
@@ -111,10 +121,16 @@ export function parseKif(text: string): GameExport {
   let winner: "sente" | "gote" | undefined;
   if (finished && endStatusRaw) {
     if (endStatusRaw === "投了" || endStatusRaw === "切れ負け" || endStatusRaw === "詰み") {
+      // The lastPly is the would-be move of the side who DIDN'T play (resigned /
+      // ran out / got mated). They're the loser; the other side wins.
       const loser: "sente" | "gote" = lastPly % 2 === 1 ? "sente" : "gote";
       winner = loser === "sente" ? "gote" : "sente";
+    } else if (endStatusRaw.startsWith("入玉宣言")) {
+      // Entering-king declaration: the declarer is the side whose turn it was
+      // and they win outright by declaring instead of moving.
+      winner = lastPly % 2 === 1 ? "sente" : "gote";
     }
-    // 引き分け / 中断 / 反則: leave winner undefined.
+    // 引き分け / 中断 / 反則 / 千日手 / 持将棋 / unknown: leave winner undefined.
   }
 
   return {
