@@ -233,6 +233,45 @@ export function useClocks(args: {
     return () => window.clearInterval(id);
   }, [state.turn, state.finished]);
 
+  // Visibility re-anchor: while the tab is hidden the 1Hz live ticker is throttled
+  // (Chrome) or paused entirely (Safari minimised), so on return the active player's
+  // clock is stale by ~hiddenMs. Snap forward by that amount as a one-shot, then
+  // force a fresh export sync to catch any moves / ending that happened in the gap.
+  // The sync's setState early-returns when nothing advanced, so it doesn't clobber
+  // the local snap; if a move *did* happen during the gap, the move-driven update
+  // overrides the snap with the true post-move anchor.
+  const hiddenAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    const onChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      if (document.visibilityState !== "visible") return;
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = null;
+      if (hiddenAt !== null) {
+        const hiddenMs = Date.now() - hiddenAt;
+        setState((s) => {
+          if (!s.turn || s.finished) return s;
+          const apply = (c: ClockState | null): ClockState | null => {
+            if (!c) return c;
+            if (c.mainMs > hiddenMs) return { ...c, mainMs: c.mainMs - hiddenMs };
+            const overflow = hiddenMs - c.mainMs;
+            return { ...c, mainMs: 0, byoyomiMs: Math.max(0, c.byoyomiMs - overflow) };
+          };
+          return s.turn === "sente"
+            ? { ...s, sente: apply(s.sente) }
+            : { ...s, gote: apply(s.gote) };
+        });
+      }
+      if (gameIdRef.current) void sync(gameIdRef.current, "sfen");
+    };
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Trigger 4: when the active player's clock hits 0 in our local model, do an immediate
   // sync — the server can confirm 切れ負け right away instead of waiting for the next 30s
   // safety-net tick. Fires once per zero-transition (a flag resets when the clock starts

@@ -214,10 +214,77 @@ export function useTvFeed(): TvState & TvControls {
     });
 
     feedRef.current = feed;
+
+    // When the tab returns to visible after being backgrounded, audit the current
+    // state against the lishogi server: the SSE connection may have been throttled
+    // or silently dropped while hidden, so we may have missed a featured rotation
+    // and/or sfen events for the current game. If we find a divergence, force the
+    // SSE to reconnect so the live stream is healthy again.
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      const gameId = stateRef.current.gameId;
+      if (!gameId) {
+        feed.forceReconnect();
+        return;
+      }
+      let needsReconnect = false;
+      // Has lishogi rotated the featured game while we were hidden?
+      try {
+        const channels = await fetchChannels(ac.signal);
+        const std = channels.standard;
+        if (
+          std &&
+          std.gameId !== gameId &&
+          stateRef.current.pendingGame?.id !== std.gameId
+        ) {
+          setState((s) => ({
+            ...s,
+            pendingGame: {
+              id: std.gameId,
+              sfen: null,
+              lm: null,
+              sente: fromChannel(std),
+              gote: null,
+            },
+          }));
+          needsReconnect = true;
+        }
+      } catch {
+        // Network blip; keep going.
+      }
+      // Has the current game advanced beyond what we last saw via SSE? Skip during
+      // a deferred switch — sfen events are dropped on purpose then, and
+      // commitGameSwitch will refresh from export when it actually fires.
+      if (!stateRef.current.pendingGame) {
+        try {
+          const p = await fetchInitialPosition(gameId, ac.signal);
+          if (p && p.sfen !== stateRef.current.sfen) {
+            setState((s) => {
+              if (s.gameId !== gameId) return s;
+              if (s.sfen === p.sfen) return s;
+              return {
+                ...s,
+                sfen: p.sfen,
+                lm: p.lm,
+                posSeq: s.posSeq + 1,
+                sfenAt: Date.now(),
+              };
+            });
+            needsReconnect = true;
+          }
+        } catch {
+          // Same.
+        }
+      }
+      if (needsReconnect) feed.forceReconnect();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       ac.abort();
       feed.stop();
       feedRef.current = null;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
