@@ -2,7 +2,7 @@
 
 [lishogi](https://lishogi.org/tv) で配信中の注目対局を観戦しながら、**ブラウザの中で動く WASM 将棋エンジン (YaneuraOu)** がリアルタイムに評価値・候補手・読み筋を計算してくれる Web アプリです。サーバを介さずにすべてブラウザ単独で完結します。
 
-🌐 公開先: <https://tkihira.github.io/shogitv/>
+🌐 公開先: <https://shogitv.vercel.app/>
 
 ## できること
 
@@ -25,7 +25,6 @@
 | [shogiground](https://github.com/WandererXII/shogiground) | 盤面描画 (lishogi 公式) |
 | [shogiops](https://github.com/WandererXII/shogiops) | SFEN/USI parse、`makeJapaneseMoveOrDrop` で日本語棋譜化 |
 | [@mizarjp/yaneuraou.k-p](https://www.npmjs.com/package/@mizarjp/yaneuraou.k-p) | YaneuraOu (NNUE K-P) の WASM ビルド |
-| [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) | COOP/COEP ヘッダを Service Worker で擬似注入 (GH Pages 用) |
 | [@vitejs/plugin-basic-ssl](https://github.com/vitejs/vite-plugin-basic-ssl) | 開発サーバ用の自己署名 HTTPS (iPhone Safari 検証用) |
 
 ### データソース (lishogi 公開 API)
@@ -53,8 +52,7 @@
 YaneuraOu.wasm は SharedArrayBuffer (= マルチスレッド) を要求するため、ページが [crossOriginIsolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated) でなければ動きません。
 
 - **dev**: `vite.config.ts` の `server.headers` で `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` を付与
-- **prod (GitHub Pages)**: GH Pages はカスタムヘッダ非対応のため、`coi-serviceworker.js` を読み込み Service Worker 側でヘッダを擬似注入。SW 登録 → ページ自動 reload で隔離コンテキスト確立
-- **iOS Safari の SW 半壊状態リカバリ**: SAB が undefined のまま残るバグ対策として、`index.html` の inline スクリプトで「SW 登録済 + SAB 無し」を検出したら全 SW を unregister + reload（最大 3 回まで）
+- **prod (Vercel)**: `vercel.json` の `headers` で同じ 2 ヘッダを `/(.*)` に当てる。エンジン本体 (`/engine/*`) と Vite ハッシュ付きアセット (`/assets/*`) は immutable キャッシュ
 
 ### ロバスト性
 
@@ -77,12 +75,12 @@ YaneuraOu.wasm は SharedArrayBuffer (= マルチスレッド) を要求する�
 │  │                EvalScore, GameHeader …      │   │
 │  └─────────────────────────────────────────────┘   │
 │                          ↓                         │
-│  ┌──────────────────────────┐  ┌─────────────────┐ │
-│  │ Engine Worker            │  │ coi-serviceworker│ │
-│  │  worker-host.js          │  │ COOP/COEP 注入  │ │
-│  │   └ YaneuraOu.wasm       │  │                 │ │
-│  │     (MultiPV=3, threads) │  │                 │ │
-│  └──────────────────────────┘  └─────────────────┘ │
+│  ┌──────────────────────────┐                       │
+│  │ Engine Worker            │                       │
+│  │  worker-host.js          │                       │
+│  │   └ YaneuraOu.wasm       │                       │
+│  │     (MultiPV=3, threads) │                       │
+│  └──────────────────────────┘                       │
 └────────────────────────────────────────────────────┘
        ↓ HTTP / SSE
 ┌────────────────────────────────────────────────────┐
@@ -111,9 +109,16 @@ npm run build
 
 # ビルド済みの dist/ をローカルで配信
 npm run preview
+```
 
-# GitHub Pages に dist/ を発行 (gh-pages ブランチへ push)
-npm run deploy
+### 本番デプロイ (Vercel)
+
+リポジトリを Vercel に連携すれば `git push` でビルド & デプロイされます。Vercel は `vercel.json` の `headers` 設定を読んで COOP/COEP を付与するので、Service Worker 等の追加対応は不要です。
+
+CLI で手動デプロイする場合:
+
+```sh
+npx vercel --prod
 ```
 
 iPhone 等の他端末から開く場合は `npm run dev` 起動時に出る Network URL (`https://<IP>:<PORT>/`) を打ち、自己署名証明書の警告を一度承認してください。
@@ -123,7 +128,6 @@ iPhone 等の他端末から開く場合は `npm run dev` 起動時に出る Net
 ```
 shogitv/
 ├ public/
-│  ├ coi-serviceworker.js      ← COOP/COEP SW
 │  ├ favicon.svg
 │  └ engine/                   ← scripts/copy-engine.mjs が自動コピー
 │     ├ worker-host.js          (手書き、エンジン用 Web Worker)
@@ -131,8 +135,7 @@ shogitv/
 │     ├ yaneuraou.k-p.wasm
 │     └ yaneuraou.k-p.worker.js
 ├ scripts/
-│  ├ copy-engine.mjs           ← npm 起動時に engine/ を public/ に同期
-│  └ deploy-gh-pages.mjs       ← `npm run deploy` の本体
+│  └ copy-engine.mjs           ← npm 起動時に engine/ を public/ に同期
 ├ src/
 │  ├ App.tsx
 │  ├ main.tsx
@@ -157,8 +160,9 @@ shogitv/
 │     ├ useTvFeed.ts
 │     ├ useClocks.ts
 │     └ useEngine.ts
-├ index.html                   ← OGP, coi-serviceworker, SAB recovery
+├ index.html                   ← OGP, 旧 SW のクリーンアップスクリプト
 ├ vite.config.ts
+├ vercel.json                  ← COOP/COEP ヘッダ + immutable キャッシュ
 └ LICENSE                      ← GNU GPL-3.0
 ```
 
@@ -177,4 +181,3 @@ YaneuraOu (`@mizarjp/yaneuraou.k-p`) が GPL-3.0、`shogiground` / `shogiops` �
 - [@mizarjp/yaneuraou.wasm](https://github.com/mizar/YaneuraOu.wasm) — Emscripten による WASM 化
 - [shogiground](https://github.com/WandererXII/shogiground) / [shogiops](https://github.com/WandererXII/shogiops) — lishogi の盤・ロジックライブラリ
 - 評価関数 (Suisho 系): [たややん＠水匠(将棋AI)](https://twitter.com/tayayan_ts) (本パッケージ同梱版)
-- [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) — Guido Zuidhof 氏ら
