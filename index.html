@@ -6,6 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1c1917" />
     <title>shogi tv — lishogi 注目対局 + 評価値</title>
+    <meta name="description" content="lishogi の注目対局をリアルタイム表示し、ブラウザ内で動く WASM 将棋エンジン (YaneuraOu) で評価値・候補手・読み筋を同時に確認できる Web アプリ。" />
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="shogi tv" />
+    <meta property="og:title" content="shogi tv — lishogi 注目対局 + 評価値" />
+    <meta property="og:description" content="lishogi の注目対局をリアルタイム表示し、ブラウザ内で動く WASM 将棋エンジン (YaneuraOu) で評価値・候補手・読み筋を同時に確認できる Web アプリ。" />
+    <meta property="og:url" content="https://tkihira.github.io/shogitv/" />
+    <meta property="og:image" content="https://tkihira.github.io/shogitv/og-image.png" />
+    <meta property="og:locale" content="ja_JP" />
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="shogi tv — lishogi 注目対局 + 評価値" />
+    <meta name="twitter:description" content="lishogi の注目対局をリアルタイム表示し、評価値・候補手・読み筋をブラウザ内 WASM 将棋エンジンで同時確認。" />
+    <meta name="twitter:image" content="https://tkihira.github.io/shogitv/og-image.png" />
     <!-- coi-serviceworker injects COOP/COEP headers via a service worker so SharedArrayBuffer
          (= YaneuraOu.wasm threading) works on hosts that can't set custom HTTP headers,
          notably GitHub Pages. The SW registers, then reloads the page once so the next load
