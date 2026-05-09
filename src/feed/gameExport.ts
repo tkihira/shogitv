@@ -62,6 +62,40 @@ const RE_END = /^\s*(\d+)\s+(\S.*?)\s*$/;
 // just a normal move) only carry this trailing summary with no explicit "<ply> <label>"
 // terminator, so we fall back to it when RE_END doesn't fire.
 const RE_SUMMARY = /^まで(\d+)手で(.+?)\s*$/;
+// English-locale terminator (lishogi sometimes emits these as KIF "comments" prefixed
+// with "*"): "* Gote resigns." / "* Sente was checkmated." / "* Time forfeit by sente." /
+// "* Draw by repetition." / "* Game aborted." / etc. Lishogi seems to default to this
+// form for some games (e.g. m8k1T2dU has just `* Gote resigns.` and no Japanese
+// terminator at all), so without this branch the parser silently treats those games as
+// still ongoing and the deferred TV switch never fires.
+const RE_KIF_COMMENT = /^\s*\*\s*(.+?)\s*$/;
+const RE_EN_END_KEYWORD = /\b(?:resigns?|checkmated?|forfeits?|time(?:[\s-]+(?:up|forfeit|out))?|ran\s+out|jishogi|impasse|repetition|aborted?|stalemate|draw\b|wins?)\b/i;
+
+function parseEnglishTerminator(content: string): { labelJp: string; winner?: "sente" | "gote" } | null {
+  if (!RE_EN_END_KEYWORD.test(content)) return null;
+  let winner: "sente" | "gote" | undefined;
+  let loser: "sente" | "gote" | undefined;
+  if (/\bsente\s+wins?\b/i.test(content)) winner = "sente";
+  else if (/\bgote\s+wins?\b/i.test(content)) winner = "gote";
+  else if (/\bsente\s+(?:resigns?|(?:was\s+|is\s+)?checkmated|forfeits?|ran\s+out|made\s+an\s+illegal)/i.test(content)) loser = "sente";
+  else if (/\bgote\s+(?:resigns?|(?:was\s+|is\s+)?checkmated|forfeits?|ran\s+out|made\s+an\s+illegal)/i.test(content)) loser = "gote";
+  else if (/(?:resign|checkmat|forfeit|illegal).*\bby\s+sente\b/i.test(content)) loser = "sente";
+  else if (/(?:resign|checkmat|forfeit|illegal).*\bby\s+gote\b/i.test(content)) loser = "gote";
+  if (!winner && loser) winner = loser === "sente" ? "gote" : "sente";
+
+  let labelJp = "終局";
+  if (/resign/i.test(content)) labelJp = "投了";
+  else if (/checkmat/i.test(content)) labelJp = "詰み";
+  else if (/forfeit|ran\s+out|time[\s-]*(out|up|forfeit)/i.test(content)) labelJp = "切れ負け";
+  else if (/repetition/i.test(content)) labelJp = "千日手";
+  else if (/impasse|jishogi/i.test(content)) labelJp = "持将棋";
+  else if (/illegal/i.test(content)) labelJp = "反則";
+  else if (/abort/i.test(content)) labelJp = "中断";
+  else if (/stalemate/i.test(content)) labelJp = "ステイルメイト";
+  else if (/\bdraw\b/i.test(content)) labelJp = "引き分け";
+
+  return { labelJp, winner };
+}
 
 function parseEndStatus(raw: string): EndStatus {
   if (raw === "投了") return "resign";
@@ -110,14 +144,33 @@ export function parseKif(text: string): GameExport {
       else goteUsedMs = cumulativeMs;
       continue;
     }
-    // Summary check first — RE_END is permissive and could otherwise swallow it.
+    // English terminator comment (e.g. "* Gote resigns.") — check before RE_END since
+    // it starts with "*" not a digit, so it'd just be ignored otherwise.
+    const cm = line.match(RE_KIF_COMMENT);
+    if (cm) {
+      const en = parseEnglishTerminator(cm[1]);
+      if (en) {
+        finished = true;
+        // English terminator gives us the localised label and an explicit winner —
+        // both are more authoritative than a Japanese summary "X の勝ち" (which only
+        // tells us the winner, not the reason), so let it override.
+        summaryStatus = en.labelJp;
+        if (en.winner) summaryWinner = en.winner;
+        continue;
+      }
+      // Other "*"-prefixed commentary lines: just ignore.
+    }
+    // Summary check before RE_END — RE_END is permissive and could otherwise swallow it.
     const sm = line.match(RE_SUMMARY);
     if (sm) {
       const ply = parseInt(sm[1], 10);
       if (ply > lastPly) lastPly = ply;
-      summaryStatus = sm[2];
-      if (sm[2] === "先手の勝ち") summaryWinner = "sente";
-      else if (sm[2] === "後手の勝ち") summaryWinner = "gote";
+      // Don't overwrite a more specific English terminator label.
+      if (!summaryStatus || summaryStatus === sm[2]) summaryStatus = sm[2];
+      if (!summaryWinner) {
+        if (sm[2] === "先手の勝ち") summaryWinner = "sente";
+        else if (sm[2] === "後手の勝ち") summaryWinner = "gote";
+      }
       finished = true;
       continue;
     }
@@ -135,12 +188,16 @@ export function parseKif(text: string): GameExport {
   if (endLineLabel) {
     endStatusRaw = endLineLabel;
   } else if (summaryStatus) {
-    // Summary-only case: a winner-summary ("X の勝ち") with no explicit terminator
-    // is overwhelmingly checkmate (resign / outoftime / declaration always carry
-    // their own end-line). Synthesise "詰み" for those; otherwise pass the raw
-    // summary text through (引き分け / 千日手 / 持将棋 / etc.).
-    if (summaryWinner) endStatusRaw = "詰み";
-    else endStatusRaw = summaryStatus;
+    // Synthesise "詰み" only for the Japanese summary "X の勝ち" form (which carries
+    // a winner but not a reason — checkmate is the overwhelming cause, since resign
+    // / outoftime / declaration always carry their own terminator). English
+    // terminators set summaryStatus directly to a localised label like "投了" /
+    // "詰み" / "切れ負け" / etc., so use that as-is.
+    if (summaryStatus === "先手の勝ち" || summaryStatus === "後手の勝ち") {
+      endStatusRaw = "詰み";
+    } else {
+      endStatusRaw = summaryStatus;
+    }
   }
 
   // Sente plays odd plies (1, 3, 5, …); gote plays even plies (2, 4, 6, …).
