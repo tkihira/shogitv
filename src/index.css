@@ -172,7 +172,9 @@ button {
 .clock-row.sente .dot { background: #fff; border: 1px solid #888; }
 .clock-row.gote .dot { background: #111; border: 1px solid #888; }
 .clock-row .player-name {
-  /* Smaller than the time digits, allowed to truncate on tight viewports. */
+  /* Take the leftover horizontal space (so time + result push to the right) and ellipse
+   * any overflow rather than wrap. */
+  flex: 1;
   font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
   font-size: 0.7em;
   font-weight: 600;
@@ -189,19 +191,20 @@ button {
   flex-shrink: 0;
 }
 .clock-row .time {
-  flex: 1;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
-.clock-row .time.win,
-.clock-row .time.loss {
+.clock-row .result {
   font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
-  font-variant-numeric: normal;
+  font-size: 0.85em;
+  font-weight: 600;
+  flex-shrink: 0;
 }
-.clock-row .time.win {
+.clock-row .result.win {
   color: var(--accent);
 }
-.clock-row .time.loss {
+.clock-row .result.loss {
   color: var(--warn);
 }
 .clock-meta {

@@ -27,20 +27,14 @@ const STATUS_LABEL: Record<string, string> = {
   unknown: "終局",
 };
 
-/** What goes in the right-hand slot of the clock row: remaining time normally, "勝ち" for
- * the winner once the game has ended, or the end-status reason for the loser / both sides
- * when there's no winner (draw / aborted). Returns the text plus a modifier class for
- * styling (win / loss). */
-function clockSlot(
+/** When the game has finished, the row appends a 勝ち / 投了 / 切れ負け / etc. label after
+ * the time. Returns null while the game is still in progress. */
+function resultLabel(
   state: UseClocksState,
   color: Color,
-): { text: string; modifier: "win" | "loss" | null } {
-  if (!state.finished) {
-    return { text: formatRemaining(color === "sente" ? state.sente : state.gote), modifier: null };
-  }
-  if (state.winner === color) {
-    return { text: "勝ち", modifier: "win" };
-  }
+): { text: string; modifier: "win" | "loss" | null } | null {
+  if (!state.finished) return null;
+  if (state.winner === color) return { text: "勝ち", modifier: "win" };
   const reason = state.endStatus ? STATUS_LABEL[state.endStatus] : "終局";
   // No declared winner (draw / aborted / unknown): both sides show the reason without
   // win/loss styling. With a declared winner, the *other* side shows the loss reason.
@@ -56,15 +50,19 @@ export function ClockRow({
   color: Color;
   player: TvFeaturedPlayer | null;
 }) {
+  const c = color === "sente" ? state.sente : state.gote;
   const ticking = state.turn === color && !state.finished;
   if (state.initial === 0 && state.byoyomi === 0) return null;
-  const slot = clockSlot(state, color);
+  const result = resultLabel(state, color);
   return (
     <div className={classNames("clock-row", color, ticking && "ticking")}>
       <span className="dot" />
       <span className="player-name">{playerName(player)}</span>
       {player?.rating ? <span className="rating">{player.rating}</span> : null}
-      <span className={classNames("time", slot.modifier ?? false)}>{slot.text}</span>
+      <span className="time">{formatRemaining(c)}</span>
+      {result ? (
+        <span className={classNames("result", result.modifier ?? false)}>{result.text}</span>
+      ) : null}
     </div>
   );
 }
