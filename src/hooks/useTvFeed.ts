@@ -107,6 +107,7 @@ export function useTvFeed(): TvState & TvControls {
     // game (no current game to defer behind) and later when applyPendingNow is invoked.
     const commitGameSwitch = (g: PendingGame) => {
       lastGameIdRef.current = g.id;
+      const commitAt = Date.now();
       setState((s) => ({
         ...s,
         gameId: g.id,
@@ -117,19 +118,22 @@ export function useTvFeed(): TvState & TvControls {
         gameSeq: s.gameSeq + 1,
         pendingGame: null,
       }));
-      // Even if the featured payload didn't carry an sfen, derive the current position so
-      // the board doesn't go blank between the switch and the next move.
-      if (!g.sfen) {
-        void fetchInitialPosition(g.id, ac.signal)
-          .then((initial) => {
-            if (!initial) return;
-            setState((s) => {
-              if (s.gameId !== g.id || s.sfen) return s;
-              return { ...s, sfen: initial.sfen, lm: initial.lm, sfenAt: Date.now() };
-            });
-          })
-          .catch(() => {});
-      }
+      // Always refresh from /game/export on commit: during the deferred 5s wait we drop
+      // SSE sfen events (see the t === "sfen" handler) to keep the board from jumping
+      // ahead of the rest of the UI, so g.sfen — which came from the featured payload at
+      // queue time — may be several moves stale by the time we actually switch.
+      void fetchInitialPosition(g.id, ac.signal)
+        .then((initial) => {
+          if (!initial) return;
+          setState((s) => {
+            if (s.gameId !== g.id) return s;
+            // Defer to a fresh post-commit SSE update if one has already landed: any
+            // sfen event delivered after commitAt is newer than the export snapshot.
+            if ((s.sfenAt ?? 0) > commitAt) return s;
+            return { ...s, sfen: initial.sfen, lm: initial.lm, sfenAt: Date.now() };
+          });
+        })
+        .catch(() => {});
       // Populate player names from /api/game/{id} in case the featured payload didn't.
       void populatePlayers(g.id);
     };
@@ -167,6 +171,12 @@ export function useTvFeed(): TvState & TvControls {
       onStatus: (status) => setState((s) => ({ ...s, status })),
       onEvent: (ev: TvEvent) => {
         if (ev.t === "sfen") {
+          // While a pending game switch is queued, the lishogi TV channel has already
+          // rotated to the next game on its end, so subsequent sfen events most likely
+          // describe the *next* game rather than the one we're still showing. Drop
+          // them — commitGameSwitch will refresh the board from /game/export so we
+          // pick up the latest position when the deferred switch actually fires.
+          if (stateRef.current.pendingGame) return;
           const d = ev.d as { sfen: string; lm?: string };
           setState((s) => ({
             ...s,
