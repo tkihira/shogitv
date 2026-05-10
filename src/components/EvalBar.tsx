@@ -1,7 +1,9 @@
+import type { Color } from "shogiground/types";
 import type { EngineSnapshot } from "../engine/engineClient";
 
 type Props = {
   snapshot: EngineSnapshot | null;
+  orientation: Color;
 };
 
 /**
@@ -16,10 +18,10 @@ function cpToRatio(cp: number): number {
   return 0.5 + t * 0.5;
 }
 
-export function EvalBar({ snapshot }: Props) {
+export function EvalBar({ snapshot, orientation }: Props) {
   const best = snapshot?.lines[0];
   if (!snapshot || !best) {
-    return <div className="eval-bar idle" aria-label="評価値なし" />;
+    return <div className={`eval-bar idle orientation-${orientation}`} aria-label="評価値なし" />;
   }
   const senteSign = snapshot.turn === "sente" ? 1 : -1;
   let ratio = 0.5;
@@ -35,7 +37,7 @@ export function EvalBar({ snapshot }: Props) {
   }
   const sentePct = `${(ratio * 100).toFixed(2)}%`;
   return (
-    <div className="eval-bar" aria-label={`評価値 ${label}`}>
+    <div className={`eval-bar orientation-${orientation}`} aria-label={`評価値 ${label}`}>
       <div className="bar-track">
         <div className="bar-fill sente" style={{ "--sente-pct": sentePct } as React.CSSProperties} />
       </div>

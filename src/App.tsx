@@ -149,7 +149,7 @@ export default function App() {
           />
           <div className="board-with-bar">
             <Board sfen={tv.sfen} lm={tv.lm} orientation={orientation} kingBadges={kingBadges} />
-            <EvalBar snapshot={engine.snapshot} />
+            <EvalBar snapshot={engine.snapshot} orientation={orientation} />
           </div>
           <ClockRow
             state={clocks}

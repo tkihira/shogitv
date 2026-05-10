@@ -637,12 +637,22 @@ counter,
 .eval-bar .bar-fill.sente {
   background: #fff;
   position: absolute;
-  /* Vertical bar (desktop): fill grows from the bottom upward; sente% maps to height. */
-  bottom: 0;
+  /* Vertical bar: fill grows from the sente side. In sente orientation that's the bottom
+   * (sente sits below the board); in gote orientation the board is flipped 180° so sente
+   * is now at the top of the viewer's frame and the fill must grow downward to keep the
+   * "white side wins → bigger white area on your side" intuition. */
   left: 0;
   right: 0;
   height: var(--sente-pct, 50%);
   transition: height 250ms ease-out, width 250ms ease-out;
+}
+.eval-bar.orientation-sente .bar-fill.sente {
+  bottom: 0;
+  top: auto;
+}
+.eval-bar.orientation-gote .bar-fill.sente {
+  top: 0;
+  bottom: auto;
 }
 .eval-bar .bar-label {
   text-align: center;
