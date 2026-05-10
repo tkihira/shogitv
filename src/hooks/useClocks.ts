@@ -121,6 +121,11 @@ export function useClocks(args: {
   const lastSeenGameSeqRef = useRef<number>(-1);
   const lastSeenPosSeqRef = useRef<number>(-1);
   const lastFetchAtRef = useRef<number>(0);
+  // Separate from lastFetchAtRef: tracks only KIF-fetching syncs (sfen / game-change /
+  // visibility). The sfen throttle below is gated on this so that an interval JSON-only
+  // sync doesn't extend the sfen throttle window (the interval doesn't help anchor
+  // clocks, so a recent interval shouldn't suppress a needed KIF fetch).
+  const lastKifFetchAtRef = useRef<number>(0);
   const inFlightRef = useRef<AbortController | null>(null);
   const gameIdRef = useRef<string | null>(null);
   const onSseLagRef = useRef(args.onSseLag);
@@ -147,7 +152,9 @@ export function useClocks(args: {
     if (inFlightRef.current) inFlightRef.current.abort();
     const ac = new AbortController();
     inFlightRef.current = ac;
-    lastFetchAtRef.current = Date.now();
+    const now = Date.now();
+    lastFetchAtRef.current = now;
+    if (reason !== "interval") lastKifFetchAtRef.current = now;
     try {
       // Fetch policy: minimise per-viewer load by only pulling each endpoint when it
       // actually adds information for that trigger.
@@ -269,11 +276,12 @@ export function useClocks(args: {
   //
   // Two-step update: ALWAYS flip state.turn from the new sfen (so the local 1Hz ticker
   // decrements the correct side starting now), but rate-limit the KIF fetch to once per
-  // 5s. For ultra-fast bullet games this drops "every move = 1 KIF fetch" to ~12 KIF
-  // fetches/min ceiling regardless of move rate; for typical mid-tempo games the
-  // throttle never fires (moves are spaced > 5s apart). The trade-off is up to ~5s of
-  // clock-anchor drift between fetches, but as long as the local ticker keeps wall-clock
-  // it tracks reality closely — KIF re-anchoring just confirms.
+  // 3s — gated on lastKifFetchAtRef specifically (not lastFetchAtRef), so that interval
+  // JSON-only syncs don't extend the sfen throttle window. Ultra-fast bullet games are
+  // capped at ~20 KIF fetches/min regardless of move rate; for typical mid-tempo games
+  // the throttle never fires (moves are spaced > 3s apart). Trade-off is up to ~3s of
+  // clock-anchor drift between fetches, but the local ticker keeps wall-clock so the
+  // displayed countdown tracks reality closely — KIF re-anchoring just confirms.
   useEffect(() => {
     if (lastSeenPosSeqRef.current === args.posSeq) return;
     lastSeenPosSeqRef.current = args.posSeq;
@@ -316,7 +324,7 @@ export function useClocks(args: {
     intervalAnchorAtRef.current = Date.now();
     intervalTickRef.current = 0;
     armNextIntervalRef.current?.();
-    if (shouldThrottle(lastFetchAtRef.current, 5000)) return;
+    if (shouldThrottle(lastKifFetchAtRef.current, 3000)) return;
     void sync(gameIdRef.current, "sfen");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.posSeq]);
