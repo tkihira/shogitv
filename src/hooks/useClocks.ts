@@ -85,6 +85,17 @@ function shouldThrottle(lastFetchAt: number, minIntervalMs: number): boolean {
   return Date.now() - lastFetchAt < minIntervalMs;
 }
 
+/** Pull the side-to-move out of an SFEN string. Lishogi's TV feed sends 3-part SFEN
+ * ("<board> <turn> <hand>") where the turn token is "b" (sente) or "w" (gote). */
+function parseTurnFromSfen(sfen: string | null): Color | null {
+  if (!sfen) return null;
+  const parts = sfen.trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  if (parts[1] === "b") return "sente";
+  if (parts[1] === "w") return "gote";
+  return null;
+}
+
 export function useClocks(args: {
   gameId: string | null;
   gameSeq: number;
@@ -233,11 +244,22 @@ export function useClocks(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.gameId, args.gameSeq]);
 
-  // Trigger 2: SSE delivered a new sfen — re-fetch to capture exact per-move clock.
+  // Trigger 2: SSE delivered a new sfen.
+  //
+  // Two-step update: ALWAYS flip state.turn from the new sfen (so the local 1Hz ticker
+  // decrements the correct side starting now), but rate-limit the KIF fetch to once per
+  // 5s. For ultra-fast bullet games this drops "every move = 1 KIF fetch" to ~12 KIF
+  // fetches/min ceiling regardless of move rate; for typical mid-tempo games the
+  // throttle never fires (moves are spaced > 5s apart). The trade-off is up to ~5s of
+  // clock-anchor drift between fetches, but as long as the local ticker keeps wall-clock
+  // it tracks reality closely — KIF re-anchoring just confirms.
   useEffect(() => {
     if (lastSeenPosSeqRef.current === args.posSeq) return;
     lastSeenPosSeqRef.current = args.posSeq;
     if (!gameIdRef.current) return;
+    const turn = parseTurnFromSfen(args.sfen);
+    if (turn) setState((s) => (s.turn === turn ? s : { ...s, turn }));
+    if (shouldThrottle(lastFetchAtRef.current, 5000)) return;
     void sync(gameIdRef.current, "sfen");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.posSeq]);
