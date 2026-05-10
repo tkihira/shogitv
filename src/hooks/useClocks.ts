@@ -242,30 +242,50 @@ export function useClocks(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.posSeq]);
 
-  // Trigger 3: 10s safety net — re-sync to catch slow drift / SSE going zombie / non-time
-  // forfeitures (resign / mate / 千日手 / etc.) that the clock-zero trigger below misses.
-  // Suspend the interval entirely while the tab is hidden: nobody's watching the clock,
-  // and the visibility-return listener above already re-anchors and force-syncs the
-  // moment the user comes back. This drops idle background load to zero (browsers also
-  // throttle hidden setInterval anyway, but explicit is cheaper than throttled).
+  // Trigger 3: 10s-since-last-sync safety net — re-sync to catch slow drift / SSE going
+  // zombie / non-time forfeitures (resign / mate / 千日手 / etc.) that the clock-zero
+  // trigger below misses. Self-rescheduling setTimeout anchored to lastFetchAtRef
+  // instead of a fixed interval: any sync (sfen / game-change / visibility) updates
+  // lastFetchAtRef, so a steady stream of moves keeps pushing the next interval fire
+  // back and we never make a redundant request 1s after a sfen sync just ran.
+  // Suspend entirely while hidden — the visibility-return listener above force-syncs
+  // on return so there's nothing for the interval to do in the background.
   useEffect(() => {
     if (!args.gameId) return;
-    let intervalId: number | null = null;
-    const start = () => {
-      if (intervalId !== null) return;
-      intervalId = window.setInterval(() => {
-        if (gameIdRef.current) void sync(gameIdRef.current, "interval");
-      }, 10_000);
+    let timeoutId: number | null = null;
+    let stopped = true;
+    const armNext = () => {
+      if (stopped) return;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      // Fire 10s after the last sync. If a sfen sync has just updated lastFetchAtRef,
+      // delay can shrink toward 10s; if not, it's whatever's left of the previous
+      // window. clamp to at least 100ms so we don't busy-spin if the clock skipped.
+      const delay = Math.max(100, lastFetchAtRef.current + 10_000 - Date.now());
+      timeoutId = window.setTimeout(() => {
+        timeoutId = null;
+        if (stopped) return;
+        // Re-check elapsed at fire time: a sfen sync between scheduling and now would
+        // have pushed lastFetchAtRef forward, so we may need to skip-and-reschedule.
+        if (Date.now() - lastFetchAtRef.current >= 10_000) {
+          if (gameIdRef.current) void sync(gameIdRef.current, "interval");
+        }
+        armNext();
+      }, delay);
     };
     const stop = () => {
-      if (intervalId !== null) {
-        window.clearInterval(intervalId);
-        intervalId = null;
+      stopped = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
       }
     };
     const onVis = () => {
-      if (document.visibilityState === "visible") start();
-      else stop();
+      if (document.visibilityState === "visible") {
+        stopped = false;
+        armNext();
+      } else {
+        stop();
+      }
     };
     onVis();
     document.addEventListener("visibilitychange", onVis);
