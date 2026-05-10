@@ -48,7 +48,11 @@ export async function fetchGameExport(gameId: string, signal?: AbortSignal): Pro
   return parseKif(text);
 }
 
-const RE_TIME = /持ち時間：(\d+)分(?:\+(\d+)秒)?/;
+// "持ち時間：10分" / "持ち時間：5分+30秒" / "持ち時間：3分30秒+10秒" / "持ち時間：15秒+1秒"
+// (super-bullet, no minutes at all). Both 分 and 秒 segments of the main time are
+// optional and either may appear alone — without the seconds-only path the bullet
+// games slip through with initial=0/byoyomi=0 and ClockRow hides itself entirely.
+const RE_TIME = /持ち時間：(?:(\d+)分)?(?:(\d+)秒)?(?:\+(\d+)秒)?/;
 // "  103   ４四龍(54)   (00:08/00:04:22)"
 const RE_MOVE = /^\s*(\d+)\s+\S.*?\((\d+):(\d+)\/(\d+):(\d+):(\d+)\)\s*$/;
 // "  104   投了" / "  96   切れ負け" / "詰み" / "反則勝ち" / "引き分け" / "中断" /
@@ -126,8 +130,10 @@ export function parseKif(text: string): GameExport {
   for (const line of text.split(/\r?\n/)) {
     const tm = line.match(RE_TIME);
     if (tm) {
-      initial = parseInt(tm[1], 10) * 60;
-      byoyomi = tm[2] ? parseInt(tm[2], 10) : 0;
+      const minutes = tm[1] ? parseInt(tm[1], 10) : 0;
+      const mainSec = tm[2] ? parseInt(tm[2], 10) : 0;
+      initial = minutes * 60 + mainSec;
+      byoyomi = tm[3] ? parseInt(tm[3], 10) : 0;
       continue;
     }
     const mm = line.match(RE_MOVE);

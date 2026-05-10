@@ -323,7 +323,12 @@ export function useClocks(args: {
 export function formatClockSetting(initial: number, byoyomi: number, periods: number): string {
   const minutes = Math.floor(initial / 60);
   const seconds = initial % 60;
-  const main = seconds === 0 ? `${minutes}分` : `${minutes}:${String(seconds).padStart(2, "0")}`;
+  const main =
+    minutes === 0
+      ? `${seconds}秒`
+      : seconds === 0
+      ? `${minutes}分`
+      : `${minutes}:${String(seconds).padStart(2, "0")}`;
   if (byoyomi > 0) {
     return periods > 1
       ? `${main} + 秒読み${byoyomi}秒×${periods}`
