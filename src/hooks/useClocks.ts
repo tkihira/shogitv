@@ -116,6 +116,12 @@ export function useClocks(args: {
   /** Called when the export pulls ahead of the SSE feed (zombie connection); the parent
    * should force-reconnect and apply the fresher position. */
   onSseLag?: (gameId: string, lastPly: number) => void;
+  /** Called when a KIF sync yielded a sfen worth applying to the board — typically
+   * the first sync of a game (firstSync) or when KIF's lastPly advanced past our
+   * state.plies (catching missed SSE events). The parent should route this to
+   * applyRecovery so the board catches up without a separate /game/export JSON
+   * moves fetch. */
+  onPosition?: (gameId: string, sfen: string, lm: string | null) => void;
 }): UseClocksState {
   const [state, setState] = useState<UseClocksState>(INITIAL);
   const lastSeenGameSeqRef = useRef<number>(-1);
@@ -130,6 +136,8 @@ export function useClocks(args: {
   const gameIdRef = useRef<string | null>(null);
   const onSseLagRef = useRef(args.onSseLag);
   onSseLagRef.current = args.onSseLag;
+  const onPositionRef = useRef(args.onPosition);
+  onPositionRef.current = args.onPosition;
   const sfenAtRef = useRef(args.sfenAt);
   sfenAtRef.current = args.sfenAt;
   // Graduated interval JSON: anchor is updated on every event in the schedule (move
@@ -194,6 +202,10 @@ export function useClocks(args: {
       // advance amount inside setState so we can read it against pre-setState
       // s.plies, then run the side effect afterwards.
       let advancedToPly: number | null = null;
+      // KIF replays moves through shogiops to derive a sfen + lm. Hand it back to
+      // the parent for board update whenever it gives us a fresher position than
+      // we already have (or on first sync of a game).
+      let posSnapshot: { sfen: string; lm: string | null } | null = null;
       setState((s) => {
         // If no new move was played and the game hasn't ended, the export carries no fresh
         // clock authority — keep the locally-ticking clocks. Otherwise byoyomi resets to its
@@ -206,6 +218,9 @@ export function useClocks(args: {
         if (!firstSync) {
           if (moveAdvanced) advancedToPly = exp!.lastPly;
           else if (!exp && jsonPlyAdvance !== null) advancedToPly = jsonPlyAdvance;
+        }
+        if (exp && exp.sfen && (moveAdvanced || firstSync)) {
+          posSnapshot = { sfen: exp.sfen, lm: exp.lm ?? null };
         }
         if (!moveAdvanced && !justFinished && !firstSync) {
           return { ...s, loading: false };
@@ -250,6 +265,12 @@ export function useClocks(args: {
           onSseLagRef.current?.(gameId, advancedToPly);
         }
       }
+      // Board refresh: KIF-derived sfen takes the place of a separate /game/export
+      // JSON moves fetch. applyRecovery (the typical destination of this callback)
+      // has its own "if (s.sfen === sfen) return s" dedup, so this is a no-op when
+      // SSE already had the latest position.
+      const snap = posSnapshot as { sfen: string; lm: string | null } | null;
+      if (snap) onPositionRef.current?.(gameId, snap.sfen, snap.lm);
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
       // Soft-fail: keep showing previous state.

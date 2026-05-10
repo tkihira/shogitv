@@ -29,6 +29,12 @@ export default function App() {
         })
         .catch(() => {});
     },
+    onPosition: (gameId, sfen, lm) => {
+      // KIF-derived sfen from a periodic sync. applyRecovery dedupes when the
+      // sfen already matches what SSE delivered, so this is a no-op in the
+      // healthy case and a board catch-up when SSE missed events.
+      tv.applyRecovery(gameId, sfen, lm);
+    },
   });
   const { state: engine, analyze, newGame } = useEngine();
   const [orientation, setOrientation] = useState<"sente" | "gote">("sente");

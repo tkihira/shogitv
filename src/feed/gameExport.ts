@@ -3,7 +3,17 @@
  * Documented endpoint with CORS open: gives exact per-move clock consumption
  * for both ongoing and finished games, plus a result line that reveals the
  * winner and end status (resign / timeout / mate / etc.).
+ *
+ * Also replays the Japanese-notation move list through shogiops to reconstruct
+ * a 3-part SFEN + last USI move, so a single KIF fetch covers both clocks AND
+ * board state — no separate /game/export JSON moves fetch needed for periodic
+ * board refresh.
  */
+
+import { parseSfen, makeSfen } from "shogiops/sfen";
+import { parseKifMoveOrDrop } from "shogiops/notation/kif";
+import { makeUsi } from "shogiops/util";
+import type { Square } from "shogiops/types";
 
 export type EndStatus =
   | "resign"
@@ -34,7 +44,18 @@ export type GameExport = {
   endStatus?: EndStatus;
   endStatusRaw?: string;
   winner?: "sente" | "gote";
+  /** 3-part SFEN ("<board> <turn> <hand>") reconstructed by replaying the KIF
+   * move list. Lets a periodic KIF poll double as a board-state refresh without
+   * a separate /game/export JSON moves fetch. Undefined if move parsing failed
+   * partway (we never want a wrong sfen → discard rather than corrupt). */
+  sfen?: string;
+  /** Last move in USI form (e.g. "9a3a+", "P*5e"), derived from the parsed
+   * move list. Undefined if there were no moves or parsing failed. */
+  lm?: string;
 };
+
+const STANDARD_INITIAL_SFEN =
+  "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1";
 
 const URL_BASE = "https://lishogi.org/game/export/";
 
@@ -53,8 +74,11 @@ export async function fetchGameExport(gameId: string, signal?: AbortSignal): Pro
 // optional and either may appear alone — without the seconds-only path the bullet
 // games slip through with initial=0/byoyomi=0 and ClockRow hides itself entirely.
 const RE_TIME = /持ち時間：(?:(\d+)分)?(?:(\d+)秒)?(?:\+(\d+)秒)?/;
-// "  103   ４四龍(54)   (00:08/00:04:22)"
-const RE_MOVE = /^\s*(\d+)\s+\S.*?\((\d+):(\d+)\/(\d+):(\d+):(\d+)\)\s*$/;
+// "  103   ４四龍(54)   (00:08/00:04:22)" — captures the move token (group 2) so
+// we can replay through shogiops/notation/kif. The lazy .*? + the trailing \s+
+// before the clock paren ensures the move text doesn't swallow the trailing
+// whitespace.
+const RE_MOVE = /^\s*(\d+)\s+(\S.*?)\s+\((\d+):(\d+)\/(\d+):(\d+):(\d+)\)\s*$/;
 // "  104   投了" / "  96   切れ負け" / "詰み" / "反則勝ち" / "引き分け" / "中断" /
 // "千日手" / "持将棋" / "入玉宣言勝ち" / etc. We deliberately match *any* non-clock
 // label here so unrecognised endings still set finished=true and the deferred game
@@ -126,6 +150,8 @@ export function parseKif(text: string): GameExport {
   // From the trailing "まで<ply>手で<...>" summary line (RE_SUMMARY).
   let summaryStatus: string | undefined;
   let summaryWinner: "sente" | "gote" | undefined;
+  // Move tokens collected for shogiops replay → sfen + lm reconstruction.
+  const moveTokens: string[] = [];
 
   for (const line of text.split(/\r?\n/)) {
     const tm = line.match(RE_TIME);
@@ -139,15 +165,16 @@ export function parseKif(text: string): GameExport {
     const mm = line.match(RE_MOVE);
     if (mm) {
       const ply = parseInt(mm[1], 10);
-      // (consumed-MM:SS / cumulative-HH:MM:SS)
-      const cumH = parseInt(mm[4], 10);
-      const cumM = parseInt(mm[5], 10);
-      const cumS = parseInt(mm[6], 10);
+      // Groups: 1=ply, 2=move token, 3-7=(consumed MM:SS / cumulative HH:MM:SS)
+      const cumH = parseInt(mm[5], 10);
+      const cumM = parseInt(mm[6], 10);
+      const cumS = parseInt(mm[7], 10);
       const cumulativeMs = ((cumH * 60 + cumM) * 60 + cumS) * 1000;
       lastPly = ply;
       // Odd plies = sente moves, even = gote moves.
       if (ply % 2 === 1) senteUsedMs = cumulativeMs;
       else goteUsedMs = cumulativeMs;
+      moveTokens.push(mm[2]);
       continue;
     }
     // English terminator comment (e.g. "* Gote resigns.") — check before RE_END since
@@ -233,6 +260,39 @@ export function parseKif(text: string): GameExport {
     // 引き分け / 中断 / 反則 / 千日手 / 持将棋 / unknown: leave winner undefined.
   }
 
+  // Replay the KIF Japanese-notation move list through shogiops to derive a
+  // 3-part SFEN + last USI move. All-or-nothing: if any token fails to parse or
+  // apply (out-of-spec KIF, illegal sequence, unsupported variant move), drop
+  // both sfen and lm rather than ship a corrupted intermediate position.
+  let sfen: string | undefined;
+  let lm: string | undefined;
+  const setup = parseSfen("standard", STANDARD_INITIAL_SFEN);
+  if (setup.isOk) {
+    const pos = setup.value;
+    let lastDest: Square | undefined;
+    let parseFailed = false;
+    for (const tok of moveTokens) {
+      const md = parseKifMoveOrDrop(tok, lastDest);
+      if (!md) {
+        parseFailed = true;
+        break;
+      }
+      try {
+        pos.play(md);
+        lastDest = md.to;
+        lm = makeUsi(md);
+      } catch {
+        parseFailed = true;
+        break;
+      }
+    }
+    if (!parseFailed) {
+      sfen = makeSfen(pos).split(/\s+/).slice(0, 3).join(" ");
+    } else {
+      lm = undefined; // discard partial result
+    }
+  }
+
   return {
     initial,
     byoyomi,
@@ -244,5 +304,7 @@ export function parseKif(text: string): GameExport {
     endStatus: endStatusRaw ? parseEndStatus(endStatusRaw) : undefined,
     endStatusRaw,
     winner,
+    sfen,
+    lm,
   };
 }
