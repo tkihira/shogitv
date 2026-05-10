@@ -198,7 +198,7 @@ export function Board({ sfen, lm, orientation, kingBadges }: Props) {
           <div className="king-badges" aria-hidden="true">
             {kingSquares.sente ? (
               <div
-                className="king-badge-cell"
+                className={`king-badge-cell corner-${badgeCorner("sente", orientation)}`}
                 style={cellStyle(kingSquares.sente, orientation)}
               >
                 <span className={`king-badge ${kingBadges.sente}`}>
@@ -208,7 +208,7 @@ export function Board({ sfen, lm, orientation, kingBadges }: Props) {
             ) : null}
             {kingSquares.gote ? (
               <div
-                className="king-badge-cell"
+                className={`king-badge-cell corner-${badgeCorner("gote", orientation)}`}
                 style={cellStyle(kingSquares.gote, orientation)}
               >
                 <span className={`king-badge ${kingBadges.gote}`}>
@@ -227,4 +227,14 @@ export function Board({ sfen, lm, orientation, kingBadges }: Props) {
 function cellStyle(key: Key, orientation: Color): React.CSSProperties {
   const { col, row } = squareToGridCell(key, orientation);
   return { gridColumn: col, gridRow: row };
+}
+
+/** Pick which corner of the king's square the badge sits in. The near-side king
+ * (whose color matches the viewer's orientation) gets top-right; the far-side king
+ * (drawn upside-down by shogiground) gets bottom-left so the badge feels "above the
+ * piece's head" from the opposing player's POV — matches the rotated piece naturally
+ * even though we don't rotate the badge glyph itself. Reactive on `orientation`, so
+ * pressing the flip-board button mid-result swaps both badges to the right corner. */
+function badgeCorner(kingColor: Color, orientation: Color): "tr" | "bl" {
+  return kingColor === orientation ? "tr" : "bl";
 }

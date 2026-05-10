@@ -493,10 +493,22 @@ piece.king.gote::before { content: "王"; }
 }
 .king-badge-cell {
   display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
   padding: 4%;
   overflow: hidden;
+}
+/* Near-side king (color matches viewer orientation): badge in the top-right of the
+ * square — the same visual corner the user already reads as "top". */
+.king-badge-cell.corner-tr {
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+/* Far-side king (opposing color, piece drawn 180°): badge in the bottom-left so it
+ * still appears in the upper-right corner *of the rotated piece*, matching how the
+ * far player would naturally read their own king. The badge glyph itself stays
+ * upright (in the viewer's frame), so legibility is preserved without rotating text. */
+.king-badge-cell.corner-bl {
+  align-items: flex-end;
+  justify-content: flex-start;
 }
 .king-badge {
   display: inline-flex;
