@@ -198,15 +198,14 @@ export function useClocks(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.posSeq]);
 
-  // Trigger 3: 30s safety net — re-sync to catch slow drift / SSE going zombie. End-of-game
-  // detection (切れ負け in particular) is no longer this interval's job; the clock-zero
-  // trigger below handles that more cheaply. Higher interval keeps the per-viewer request
-  // rate down to ~2 req/min, well inside lishogi's "reasonable" load.
+  // Trigger 3: 10s safety net — re-sync to catch slow drift / SSE going zombie / non-time
+  // forfeitures (resign / mate / 千日手 / etc.) that the clock-zero trigger below misses.
+  // Confirmed at ~6 req/min per viewer over a full day with no lishogi rate-limit hits.
   useEffect(() => {
     if (!args.gameId) return;
     const id = window.setInterval(() => {
       if (gameIdRef.current) void sync(gameIdRef.current, "interval");
-    }, 30_000);
+    }, 10_000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.gameId]);
