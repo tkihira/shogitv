@@ -476,6 +476,57 @@ piece.rook::before { content: "飛"; }
 piece.king.sente::before { content: "玉"; }
 piece.king.gote::before { content: "王"; }
 
+/* === King result badges ===
+ *
+ * Overlay grid that mirrors the 9×9 piece grid inside .sg-wrap. When the game has
+ * finished, App.tsx hands Board a per-side badge kind ("win" / "loss" / "draw") and
+ * we drop a small chip in the top-right corner of each king's square. .sg-wrap is the
+ * cq inline-size container, so cqw units scale with the actual board width. */
+.king-badges {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  grid-template-rows: repeat(9, 1fr);
+  pointer-events: none;
+  z-index: 5;
+}
+.king-badge-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 4%;
+  overflow: hidden;
+}
+.king-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 50%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
+  font-weight: 700;
+  font-size: clamp(11px, 3.5cqw, 22px);
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.king-badge.win {
+  background: #ffffff;
+  color: #111;
+  border: 1.5px solid #555;
+}
+.king-badge.loss {
+  background: #111;
+  color: #fff;
+  border: 1.5px solid #555;
+}
+.king-badge.draw {
+  background: #888;
+  color: #fff;
+  border: 1.5px solid #aaa;
+}
+
 .hand-count {
   font-size: 0.8em;
   color: var(--text-dim);

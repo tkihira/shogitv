@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Board } from "./components/Board";
+import { Board, type KingBadge } from "./components/Board";
 import { GameHeader } from "./components/GameHeader";
 import { EvalBar } from "./components/EvalBar";
 import { EvalScore } from "./components/EvalScore";
@@ -127,6 +127,16 @@ export default function App() {
     analyze(tv.sfen, turn);
   }, [tv.sfen, engine.status, analyze]);
 
+  // Result badges to drop on each king's square once the game is finished. Winner gets
+  // a white "勝", loser a black "負"; draws (千日手 / 持将棋 / 引き分け / 中断 / etc.)
+  // get a grey "=" on both sides.
+  const kingBadges = useMemo<{ sente: KingBadge; gote: KingBadge } | undefined>(() => {
+    if (!clocks.finished) return undefined;
+    if (clocks.winner === "sente") return { sente: "win", gote: "loss" };
+    if (clocks.winner === "gote") return { sente: "loss", gote: "win" };
+    return { sente: "draw", gote: "draw" };
+  }, [clocks.finished, clocks.winner]);
+
   return (
     <div className="app">
       <GameHeader gameId={tv.gameId} sente={sente} gote={gote} feedStatus={tv.status} />
@@ -138,7 +148,7 @@ export default function App() {
             player={orientation === "sente" ? gote : sente}
           />
           <div className="board-with-bar">
-            <Board sfen={tv.sfen} lm={tv.lm} orientation={orientation} />
+            <Board sfen={tv.sfen} lm={tv.lm} orientation={orientation} kingBadges={kingBadges} />
             <EvalBar snapshot={engine.snapshot} />
           </div>
           <ClockRow

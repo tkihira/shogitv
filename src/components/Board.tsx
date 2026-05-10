@@ -1,8 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Shogiground } from "shogiground";
 import { standardToForsyth } from "shogiground/sfen";
 import type { Api } from "shogiground/api";
 import type { Color, Key, RoleString } from "shogiground/types";
+
+export type KingBadge = "win" | "loss" | "draw";
+const BADGE_TEXT: Record<KingBadge, string> = { win: "勝", loss: "負", draw: "=" };
 
 const ROLES: RoleString[] = [
   "rook",
@@ -86,17 +89,64 @@ function parseUsiSquare(s: string): Key | null {
   return `${file}${rank}` as Key;
 }
 
+/** Walk the board portion of an SFEN ("lnsgkgsnl/1r5b1/...") and return the squares
+ * that hold each side's king. Ranks run a→i (top→bottom from sente's POV); within a
+ * rank the SFEN reads file 9 → file 1 (left → right when shown sente-up). */
+function findKingSquares(boardSfen: string | undefined): { sente?: Key; gote?: Key } {
+  if (!boardSfen) return {};
+  const ranks = boardSfen.split("/");
+  if (ranks.length !== 9) return {};
+  let sente: Key | undefined;
+  let gote: Key | undefined;
+  for (let r = 0; r < 9; r++) {
+    let file = 9;
+    for (let i = 0; i < ranks[r].length; i++) {
+      const c = ranks[r][i];
+      if (c >= "1" && c <= "9") {
+        file -= parseInt(c, 10);
+        continue;
+      }
+      if (c === "+") continue; // promotion prefix doesn't consume a file slot
+      if (c === "K" || c === "k") {
+        const rank = String.fromCharCode("a".charCodeAt(0) + r);
+        const key = `${file}${rank}` as Key;
+        if (c === "K") sente = key;
+        else gote = key;
+      }
+      file -= 1;
+    }
+  }
+  return { sente, gote };
+}
+
+/** Map a shogi square (file/rank) to a 1-based 9×9 grid cell, accounting for the
+ * viewer's orientation so the badge lands on the right square visually. */
+function squareToGridCell(key: Key, orientation: Color): { col: number; row: number } {
+  const file = parseInt(key[0], 10);
+  const rankIdx = key.charCodeAt(1) - "a".charCodeAt(0);
+  if (orientation === "sente") {
+    // file 1 (sente's right) on the right; rank a (gote's back) on the top.
+    return { col: 10 - file, row: rankIdx + 1 };
+  }
+  // gote orientation flips both axes 180°.
+  return { col: file, row: 9 - rankIdx };
+}
+
 type Props = {
   sfen: string | null;
   lm: string | null;
   orientation: Color;
+  /** When set, draws a badge in the top-right corner of each king's square so the
+   * winner / loser is obvious at a glance from the board alone. */
+  kingBadges?: { sente: KingBadge; gote: KingBadge };
 };
 
-export function Board({ sfen, lm, orientation }: Props) {
+export function Board({ sfen, lm, orientation, kingBadges }: Props) {
   const boardRef = useRef<HTMLDivElement>(null);
   const handTopRef = useRef<HTMLDivElement>(null);
   const handBottomRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<Api | null>(null);
+  const kingSquares = useMemo(() => findKingSquares(splitSfen(sfen).board), [sfen]);
 
   // Initialize once.
   useEffect(() => {
@@ -144,8 +194,37 @@ export function Board({ sfen, lm, orientation }: Props) {
       <div ref={handTopRef} className="hand hand-top" />
       <div className="sg-wrap">
         <div ref={boardRef} />
+        {kingBadges && (kingSquares.sente || kingSquares.gote) ? (
+          <div className="king-badges" aria-hidden="true">
+            {kingSquares.sente ? (
+              <div
+                className="king-badge-cell"
+                style={cellStyle(kingSquares.sente, orientation)}
+              >
+                <span className={`king-badge ${kingBadges.sente}`}>
+                  {BADGE_TEXT[kingBadges.sente]}
+                </span>
+              </div>
+            ) : null}
+            {kingSquares.gote ? (
+              <div
+                className="king-badge-cell"
+                style={cellStyle(kingSquares.gote, orientation)}
+              >
+                <span className={`king-badge ${kingBadges.gote}`}>
+                  {BADGE_TEXT[kingBadges.gote]}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <div ref={handBottomRef} className="hand hand-bottom" />
     </div>
   );
+}
+
+function cellStyle(key: Key, orientation: Color): React.CSSProperties {
+  const { col, row } = squareToGridCell(key, orientation);
+  return { gridColumn: col, gridRow: row };
 }
