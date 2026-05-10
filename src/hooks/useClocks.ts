@@ -200,13 +200,35 @@ export function useClocks(args: {
 
   // Trigger 3: 10s safety net — re-sync to catch slow drift / SSE going zombie / non-time
   // forfeitures (resign / mate / 千日手 / etc.) that the clock-zero trigger below misses.
-  // Confirmed at ~6 req/min per viewer over a full day with no lishogi rate-limit hits.
+  // Suspend the interval entirely while the tab is hidden: nobody's watching the clock,
+  // and the visibility-return listener above already re-anchors and force-syncs the
+  // moment the user comes back. This drops idle background load to zero (browsers also
+  // throttle hidden setInterval anyway, but explicit is cheaper than throttled).
   useEffect(() => {
     if (!args.gameId) return;
-    const id = window.setInterval(() => {
-      if (gameIdRef.current) void sync(gameIdRef.current, "interval");
-    }, 10_000);
-    return () => window.clearInterval(id);
+    let intervalId: number | null = null;
+    const start = () => {
+      if (intervalId !== null) return;
+      intervalId = window.setInterval(() => {
+        if (gameIdRef.current) void sync(gameIdRef.current, "interval");
+      }, 10_000);
+    };
+    const stop = () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") start();
+      else stop();
+    };
+    onVis();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVis);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.gameId]);
 
