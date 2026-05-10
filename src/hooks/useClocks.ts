@@ -107,27 +107,39 @@ export function useClocks(args: {
   const sfenAtRef = useRef(args.sfenAt);
   sfenAtRef.current = args.sfenAt;
 
-  const sync = async (gameId: string, reason: "game-change" | "sfen" | "interval") => {
-    // Throttle "interval" only — every sfen event must fetch (otherwise the very last move,
-    // which often carries the end-of-game line in the KIF, can be skipped if it arrives within
-    // a small window of the previous sync, and the TV may switch to the next game before the
-    // safety net fires).
+  const sync = async (
+    gameId: string,
+    reason: "game-change" | "sfen" | "interval" | "visibility",
+  ) => {
+    // Throttle "interval" only — every other reason represents a discrete event we
+    // don't want to suppress (sfen = move just played, game-change = switch, visibility
+    // = user just came back from a backgrounded tab).
     if (reason === "interval" && shouldThrottle(lastFetchAtRef.current, 3000)) return;
     if (inFlightRef.current) inFlightRef.current.abort();
     const ac = new AbortController();
     inFlightRef.current = ac;
     lastFetchAtRef.current = Date.now();
     try {
-      // Fetch policy:
-      // - "interval" (10s safety net + clock-zero trigger): JSON only. We only want to
-      //   know "did the game end?" and the early-return below drops KIF data anyway when
-      //   no move advanced — fetching it would be pure waste.
-      // - "sfen" / "game-change": KIF + JSON. KIF gives per-move clock anchors that JSON
-      //   doesn't expose; JSON gives authoritative finished / winner.
+      // Fetch policy: minimise per-viewer load by only pulling each endpoint when it
+      // actually adds information for that trigger.
+      //
+      //   reason          KIF  JSON  rationale
+      //   ──────────────  ───  ────  ────────────────────────────────────────────────
+      //   game-change     ✓    ✓     Fresh game needs both initial clocks AND status.
+      //   sfen (per move) ✓    ✗     Only KIF carries per-move clock anchors. JSON
+      //                              would only be informative if the move ended the
+      //                              game (mate); KIF's summary line catches that and
+      //                              the 10s interval JSON catches anything KIF missed.
+      //   interval (10s)  ✗    ✓     Just want "is the game over?" — KIF would be
+      //                              discarded by the early-return when no move has
+      //                              advanced anyway.
+      //   visibility      ✓    ✓     User just came back; might have missed an end
+      //                              event, want both for an immediate catch-up.
       const wantsKif = reason !== "interval";
+      const wantsJson = reason !== "sfen";
       const [exp, info] = await Promise.all([
         wantsKif ? fetchGameExport(gameId, ac.signal) : Promise.resolve(null),
-        fetchGameInfo(gameId, ac.signal).catch(() => null),
+        wantsJson ? fetchGameInfo(gameId, ac.signal).catch(() => null) : Promise.resolve(null),
       ]);
       if (gameIdRef.current !== gameId) return; // game switched while in flight
 
@@ -318,7 +330,7 @@ export function useClocks(args: {
             : { ...s, gote: apply(s.gote) };
         });
       }
-      if (gameIdRef.current) void sync(gameIdRef.current, "sfen");
+      if (gameIdRef.current) void sync(gameIdRef.current, "visibility");
     };
     document.addEventListener("visibilitychange", onChange);
     return () => document.removeEventListener("visibilitychange", onChange);
