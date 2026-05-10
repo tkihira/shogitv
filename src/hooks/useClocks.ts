@@ -118,42 +118,64 @@ export function useClocks(args: {
     inFlightRef.current = ac;
     lastFetchAtRef.current = Date.now();
     try {
-      // Always fetch both: the JSON status is the authoritative source for finished /
-      // winner / endStatus (it covers cases the KIF parser would miss — aborted games
-      // with no terminator line, future statuses we don't know about, etc.). KIF still
-      // gives us per-move clock consumption that JSON doesn't expose.
+      // Fetch policy:
+      // - "interval" (10s safety net + clock-zero trigger): JSON only. We only want to
+      //   know "did the game end?" and the early-return below drops KIF data anyway when
+      //   no move advanced — fetching it would be pure waste.
+      // - "sfen" / "game-change": KIF + JSON. KIF gives per-move clock anchors that JSON
+      //   doesn't expose; JSON gives authoritative finished / winner.
+      const wantsKif = reason !== "interval";
       const [exp, info] = await Promise.all([
-        fetchGameExport(gameId, ac.signal),
+        wantsKif ? fetchGameExport(gameId, ac.signal) : Promise.resolve(null),
         fetchGameInfo(gameId, ac.signal).catch(() => null),
       ]);
       if (gameIdRef.current !== gameId) return; // game switched while in flight
-      const built = buildFromExport(exp, info);
 
       // Pick the most authoritative finished/endStatus/winner trio. JSON wins when
       // available; KIF parser output is the fallback for the rare case where the
-      // /api/game request failed.
+      // /api/game request failed (and we have a KIF to fall back on).
       const fromJson = info ? statusToEndStatus(info.status) : null;
-      const finished = fromJson ? fromJson.finished : exp.finished;
+      const finished = fromJson ? fromJson.finished : exp?.finished ?? false;
       const endStatus: EndStatus | null = fromJson
         ? fromJson.endStatus
-        : exp.endStatus ?? null;
-      const winner: Color | null = info?.winner ?? exp.winner ?? null;
+        : exp?.endStatus ?? null;
+      const winner: Color | null = info?.winner ?? exp?.winner ?? null;
 
-      let advanced = false;
+      // SSE-lag detection: a ply count past ours means SSE missed the move(s).
+      // KIF gives lastPly directly; JSON-only ticks expose `plies`. Capture the
+      // advance amount inside setState so we can read it against pre-setState
+      // s.plies, then run the side effect afterwards.
+      let advancedToPly: number | null = null;
       setState((s) => {
         // If no new move was played and the game hasn't ended, the export carries no fresh
         // clock authority — keep the locally-ticking clocks. Otherwise byoyomi resets to its
         // full 30s at every safety-net sync because buildFromExport always returns the
         // post-last-move state, where byoyomi is 30 by shogi rules.
-        const moveAdvanced = exp.lastPly > s.plies;
+        const moveAdvanced = exp ? exp.lastPly > s.plies : false;
+        const jsonPlyAdvance = info && info.plies > s.plies ? info.plies : null;
         const justFinished = finished && !s.finished;
         const firstSync = s.syncMs === null;
-        // Track for the post-setState SSE-lag check. Don't flag firstSync — at startup the
-        // export will of course be ahead of our empty state.
-        if (moveAdvanced && !firstSync) advanced = true;
+        if (!firstSync) {
+          if (moveAdvanced) advancedToPly = exp!.lastPly;
+          else if (!exp && jsonPlyAdvance !== null) advancedToPly = jsonPlyAdvance;
+        }
         if (!moveAdvanced && !justFinished && !firstSync) {
           return { ...s, loading: false };
         }
+        // Status-only path (interval polling that detected just-finished). Don't touch
+        // clocks — the local ticker has them at the right value already.
+        if (!exp) {
+          return {
+            ...s,
+            loading: false,
+            game: info ?? s.game,
+            finished,
+            endStatus,
+            winner,
+            turn: finished ? null : s.turn,
+          };
+        }
+        const built = buildFromExport(exp, info);
         return {
           ...s,
           loading: false,
@@ -171,17 +193,13 @@ export function useClocks(args: {
           winner,
         };
       });
-      // SSE lag detection: the export saw a new move; if the SSE feed hasn't delivered an
-      // sfen recently (or hasn't delivered any since startup), it has gone zombie. Tell the
-      // parent so it can force-reconnect and patch in the missed position. Threshold of
-      // 12s is permissive enough to avoid false positives in blitz games (where SSE may
-      // deliver shortly after our 5-second polling tick) while still catching real zombies
-      // that are typically silent for 30s+.
-      if (advanced && !finished) {
+      // 12s threshold is permissive enough to avoid false positives in blitz games while
+      // still catching real zombies (which tend to be silent for 30s+).
+      if (advancedToPly !== null && !finished) {
         const sfenAt = sfenAtRef.current ?? 0;
         const sinceLastSse = sfenAt > 0 ? Date.now() - sfenAt : Infinity;
         if (sinceLastSse > 12_000) {
-          onSseLagRef.current?.(gameId, exp.lastPly);
+          onSseLagRef.current?.(gameId, advancedToPly);
         }
       }
     } catch (err) {
