@@ -279,7 +279,37 @@ export function useClocks(args: {
     lastSeenPosSeqRef.current = args.posSeq;
     if (!gameIdRef.current) return;
     const turn = parseTurnFromSfen(args.sfen);
-    if (turn) setState((s) => (s.turn === turn ? s : { ...s, turn }));
+    if (turn) {
+      setState((s) => {
+        if (s.turn === turn) return s;
+        // The player who just moved is the side whose turn it WAS before this sfen.
+        // Byoyomi refreshes per move, so if they were in byoyomi (mainMs ran out),
+        // restore their byoyomi pool to full. Without this, throttled sfen-driven
+        // syncs would leave the mover's byoyomi at the partial remnant the local
+        // ticker had decremented to, and on their next turn it would count down
+        // from there → premature 切れ負け in the local display.
+        const mover = s.turn;
+        let next: UseClocksState = { ...s, turn };
+        if (mover && s.byoyomi > 0) {
+          const moverClock = mover === "sente" ? s.sente : s.gote;
+          if (
+            moverClock &&
+            moverClock.mainMs <= 0 &&
+            moverClock.byoyomiPeriodsLeft > 0
+          ) {
+            const refreshed: ClockState = {
+              ...moverClock,
+              byoyomiMs: s.byoyomi * 1000,
+            };
+            next =
+              mover === "sente"
+                ? { ...next, sente: refreshed }
+                : { ...next, gote: refreshed };
+          }
+        }
+        return next;
+      });
+    }
     // Reset the graduated interval schedule on every move event (whether or not we end
     // up actually fetching KIF below — a throttled-skipped move still represents the
     // "just moved → quick status check might be valuable" trigger we want to anchor on).
