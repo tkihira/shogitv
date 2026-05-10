@@ -96,6 +96,16 @@ function parseTurnFromSfen(sfen: string | null): Color | null {
   return null;
 }
 
+/** Inter-event delay for the graduated interval JSON poll. After a move, the first
+ * status check fires 3s later (most quick resigns / declarations happen within seconds
+ * of the opponent's last move). The second check 5s after that. From there on, settle
+ * into a steady 10s rhythm. Each move resets the counter. */
+function interFireDelayMs(tickCount: number): number {
+  if (tickCount === 0) return 3_000;
+  if (tickCount === 1) return 5_000;
+  return 10_000;
+}
+
 export function useClocks(args: {
   gameId: string | null;
   gameSeq: number;
@@ -117,6 +127,14 @@ export function useClocks(args: {
   onSseLagRef.current = args.onSseLag;
   const sfenAtRef = useRef(args.sfenAt);
   sfenAtRef.current = args.sfenAt;
+  // Graduated interval JSON: anchor is updated on every event in the schedule (move
+  // events reset tickCount to 0; interval fires increment it). The next fire target
+  // is `intervalAnchorAtRef + interFireDelayMs(intervalTickRef)`.
+  const intervalAnchorAtRef = useRef<number>(0);
+  const intervalTickRef = useRef<number>(0);
+  // Hoisted so Trigger 1 / Trigger 2 / visibility re-anchor can reschedule the timer
+  // when they reset the graduated state.
+  const armNextIntervalRef = useRef<(() => void) | null>(null);
 
   const sync = async (
     gameId: string,
@@ -240,6 +258,9 @@ export function useClocks(args: {
     lastSeenGameSeqRef.current = args.gameSeq;
     gameIdRef.current = args.gameId;
     setState(() => ({ ...INITIAL, loading: true }));
+    intervalAnchorAtRef.current = Date.now();
+    intervalTickRef.current = 0;
+    armNextIntervalRef.current?.();
     void sync(args.gameId, "game-change");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.gameId, args.gameSeq]);
@@ -259,19 +280,29 @@ export function useClocks(args: {
     if (!gameIdRef.current) return;
     const turn = parseTurnFromSfen(args.sfen);
     if (turn) setState((s) => (s.turn === turn ? s : { ...s, turn }));
+    // Reset the graduated interval schedule on every move event (whether or not we end
+    // up actually fetching KIF below — a throttled-skipped move still represents the
+    // "just moved → quick status check might be valuable" trigger we want to anchor on).
+    intervalAnchorAtRef.current = Date.now();
+    intervalTickRef.current = 0;
+    armNextIntervalRef.current?.();
     if (shouldThrottle(lastFetchAtRef.current, 5000)) return;
     void sync(gameIdRef.current, "sfen");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.posSeq]);
 
-  // Trigger 3: 10s-since-last-sync safety net — re-sync to catch slow drift / SSE going
-  // zombie / non-time forfeitures (resign / mate / 千日手 / etc.) that the clock-zero
-  // trigger below misses. Self-rescheduling setTimeout anchored to lastFetchAtRef
-  // instead of a fixed interval: any sync (sfen / game-change / visibility) updates
-  // lastFetchAtRef, so a steady stream of moves keeps pushing the next interval fire
-  // back and we never make a redundant request 1s after a sfen sync just ran.
-  // Suspend entirely while hidden — the visibility-return listener above force-syncs
-  // on return so there's nothing for the interval to do in the background.
+  // Trigger 3: graduated interval JSON poll, anchored on each "schedule event" in
+  // intervalAnchorAtRef. After a move, we want a quick first status check (catches
+  // a quick resign/declaration), then ramp down to a steady-state cadence:
+  //
+  //   move                  → tickCount = 0, target = anchor + 3s
+  //   first interval fires  → tickCount = 1, target = anchor + 5s
+  //   second interval fires → tickCount = 2, target = anchor + 10s
+  //   third+ fires          → tickCount = 3+, target = anchor + 10s (steady state)
+  //
+  // Move events (Trigger 1 / Trigger 2) reset tickCount to 0 and re-arm via the
+  // hoisted ref. Suspend entirely while hidden — the visibility-return listener above
+  // force-syncs on return so there's nothing for the interval to do in the background.
   useEffect(() => {
     if (!args.gameId) return;
     let timeoutId: number | null = null;
@@ -279,21 +310,24 @@ export function useClocks(args: {
     const armNext = () => {
       if (stopped) return;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
-      // Fire 10s after the last sync. If a sfen sync has just updated lastFetchAtRef,
-      // delay can shrink toward 10s; if not, it's whatever's left of the previous
-      // window. clamp to at least 100ms so we don't busy-spin if the clock skipped.
-      const delay = Math.max(100, lastFetchAtRef.current + 10_000 - Date.now());
+      const targetTime =
+        intervalAnchorAtRef.current + interFireDelayMs(intervalTickRef.current);
+      const delay = Math.max(100, targetTime - Date.now());
       timeoutId = window.setTimeout(() => {
         timeoutId = null;
         if (stopped) return;
-        // Re-check elapsed at fire time: a sfen sync between scheduling and now would
-        // have pushed lastFetchAtRef forward, so we may need to skip-and-reschedule.
-        if (Date.now() - lastFetchAtRef.current >= 10_000) {
+        // Re-check at fire time: a move event between scheduling and now would have
+        // reset both the anchor and tickCount, so the target may now be in the future.
+        const now = Date.now();
+        if (now >= intervalAnchorAtRef.current + interFireDelayMs(intervalTickRef.current)) {
           if (gameIdRef.current) void sync(gameIdRef.current, "interval");
+          intervalAnchorAtRef.current = now;
+          intervalTickRef.current += 1;
         }
         armNext();
       }, delay);
     };
+    armNextIntervalRef.current = armNext;
     const stop = () => {
       stopped = true;
       if (timeoutId !== null) {
@@ -313,6 +347,7 @@ export function useClocks(args: {
     document.addEventListener("visibilitychange", onVis);
     return () => {
       stop();
+      armNextIntervalRef.current = null;
       document.removeEventListener("visibilitychange", onVis);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -372,7 +407,15 @@ export function useClocks(args: {
             : { ...s, gote: apply(s.gote) };
         });
       }
-      if (gameIdRef.current) void sync(gameIdRef.current, "visibility");
+      if (gameIdRef.current) {
+        // Reset the graduated schedule but skip the 3s/5s burst — the visibility
+        // sync below already pulls JSON, so re-polling status 3s later would be
+        // wasteful. Setting tickCount=2 lands the next interval at +10s.
+        intervalAnchorAtRef.current = Date.now();
+        intervalTickRef.current = 2;
+        armNextIntervalRef.current?.();
+        void sync(gameIdRef.current, "visibility");
+      }
     };
     document.addEventListener("visibilitychange", onChange);
     return () => document.removeEventListener("visibilitychange", onChange);
