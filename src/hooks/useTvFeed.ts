@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchChannels, type TvChannel } from "../feed/tvChannels";
 import { startTvFeed, type TvEvent, type TvFeaturedPlayer } from "../feed/tvFeed";
 import { fetchInitialPosition } from "../feed/replayMoves";
+import { fetchGameExport } from "../feed/gameExport";
 import { fetchGameInfo, type GamePlayer } from "../feed/gameInfo";
 
 export type PendingGame = {
@@ -255,17 +256,25 @@ export function useTvFeed(): TvState & TvControls {
       // Has the current game advanced beyond what we last saw via SSE? Skip during
       // a deferred switch — sfen events are dropped on purpose then, and
       // commitGameSwitch will refresh from export when it actually fires.
+      //
+      // Uses /game/export?clocks=1 (KIF) rather than /game/export (JSON moves) for
+      // the position check: the KIF parser already reconstructs sfen via shogiops
+      // (see gameExport.ts), and the periodic poll path is on KIF anyway — using
+      // it here too keeps the visibility audit consistent and avoids carrying the
+      // JSON-moves endpoint just for this one comparison.
       if (!stateRef.current.pendingGame) {
         try {
-          const p = await fetchInitialPosition(gameId, ac.signal);
-          if (p && p.sfen !== stateRef.current.sfen) {
+          const exp = await fetchGameExport(gameId, ac.signal);
+          const sfen = exp.sfen;
+          const lm = exp.lm ?? null;
+          if (sfen && sfen !== stateRef.current.sfen) {
             setState((s) => {
               if (s.gameId !== gameId) return s;
-              if (s.sfen === p.sfen) return s;
+              if (s.sfen === sfen) return s;
               return {
                 ...s,
-                sfen: p.sfen,
-                lm: p.lm,
+                sfen,
+                lm,
                 posSeq: s.posSeq + 1,
                 sfenAt: Date.now(),
               };
