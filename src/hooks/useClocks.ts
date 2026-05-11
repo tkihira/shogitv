@@ -174,12 +174,16 @@ export function useClocks(args: {
       //                              would only be informative if the move ended the
       //                              game (mate); KIF's summary line catches that and
       //                              the 10s interval JSON catches anything KIF missed.
-      //   interval (10s)  ✗    ✓     Just want "is the game over?" — KIF would be
-      //                              discarded by the early-return when no move has
-      //                              advanced anyway.
+      //   interval        ✓    ✓     Status check AND board catch-up: the KIF now
+      //                              also replays into a sfen via shogiops, so any
+      //                              SSE-missed move gets picked up here without
+      //                              needing the onSseLag → fetchInitialPosition
+      //                              roundtrip. Costs +1 fetch per interval but
+      //                              fills the "JSON plies is CDN-cached" gap in
+      //                              SSE-lag detection.
       //   visibility      ✓    ✓     User just came back; might have missed an end
       //                              event, want both for an immediate catch-up.
-      const wantsKif = reason !== "interval";
+      const wantsKif = true;
       const wantsJson = reason !== "sfen";
       const [exp, info] = await Promise.all([
         wantsKif ? fetchGameExport(gameId, ac.signal) : Promise.resolve(null),
