@@ -162,7 +162,9 @@ export function useClocks(args: {
     inFlightRef.current = ac;
     const now = Date.now();
     lastFetchAtRef.current = now;
-    if (reason !== "interval") lastKifFetchAtRef.current = now;
+    // Every reason now pulls KIF (interval included since 7099db4), so the sfen
+    // throttle gate's last-KIF timestamp tracks all reasons too.
+    lastKifFetchAtRef.current = now;
     try {
       // Fetch policy: minimise per-viewer load by only pulling each endpoint when it
       // actually adds information for that trigger.
