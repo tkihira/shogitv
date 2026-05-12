@@ -212,6 +212,7 @@ export function useClocks(args: {
       // the parent for board update whenever it gives us a fresher position than
       // we already have (or on first sync of a game).
       let posSnapshot: { sfen: string; lm: string | null } | null = null;
+      let diag: Record<string, unknown> | null = null;
       setState((s) => {
         // If no new move was played and the game hasn't ended, the export carries no fresh
         // clock authority — keep the locally-ticking clocks. Otherwise byoyomi resets to its
@@ -228,6 +229,21 @@ export function useClocks(args: {
         if (exp && exp.sfen && (moveAdvanced || firstSync)) {
           posSnapshot = { sfen: exp.sfen, lm: exp.lm ?? null };
         }
+        diag = {
+          reason,
+          kifLastPly: exp?.lastPly,
+          kifSfen: exp?.sfen?.slice(-30) ?? null,
+          kifLm: exp?.lm ?? null,
+          jsonStatus: info?.status,
+          jsonPlies: info?.plies,
+          sPlies: s.plies,
+          sSfen_state_game: undefined, // tv.sfen lives elsewhere
+          moveAdvanced,
+          justFinished,
+          firstSync,
+          posSnapshotSet: !!posSnapshot,
+          earlyReturn: !moveAdvanced && !justFinished && !firstSync,
+        };
         if (!moveAdvanced && !justFinished && !firstSync) {
           return { ...s, loading: false };
         }
@@ -276,6 +292,7 @@ export function useClocks(args: {
       // has its own "if (s.sfen === sfen) return s" dedup, so this is a no-op when
       // SSE already had the latest position.
       const snap = posSnapshot as { sfen: string; lm: string | null } | null;
+      console.log("[shogitv:sync]", diag);
       if (snap) onPositionRef.current?.(gameId, snap.sfen, snap.lm);
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;

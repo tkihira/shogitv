@@ -177,8 +177,12 @@ export function useTvFeed(): TvState & TvControls {
           // describe the *next* game rather than the one we're still showing. Drop
           // them — commitGameSwitch will refresh the board from /game/export so we
           // pick up the latest position when the deferred switch actually fires.
-          if (stateRef.current.pendingGame) return;
+          if (stateRef.current.pendingGame) {
+            console.log("[shogitv:sse] sfen dropped (pendingGame)", { lm: (ev.d as { lm?: string }).lm });
+            return;
+          }
           const d = ev.d as { sfen: string; lm?: string };
+          console.log("[shogitv:sse] sfen", { sfen: d.sfen.slice(-30), lm: d.lm });
           setState((s) => ({
             ...s,
             sfen: d.sfen,
@@ -192,8 +196,15 @@ export function useTvFeed(): TvState & TvControls {
             sfen?: string;
             players?: TvFeaturedPlayer[];
           };
-          if (d.id === lastGameIdRef.current) return;
-          if (stateRef.current.pendingGame?.id === d.id) return; // already queued
+          if (d.id === lastGameIdRef.current) {
+            console.log("[shogitv:sse] featured (same id, skip)", { id: d.id });
+            return;
+          }
+          if (stateRef.current.pendingGame?.id === d.id) {
+            console.log("[shogitv:sse] featured (already pending, skip)", { id: d.id });
+            return;
+          }
+          console.log("[shogitv:sse] featured", { id: d.id, hasSfen: !!d.sfen });
           const incoming: PendingGame = {
             id: d.id,
             sfen: d.sfen ?? null,
@@ -303,9 +314,16 @@ export function useTvFeed(): TvState & TvControls {
   const applyRecovery = (gameId: string, sfen: string, lm: string | null) => {
     setState((s) => {
       // Don't overwrite if the user has already moved on to a different game.
-      if (s.gameId !== gameId) return s;
+      if (s.gameId !== gameId) {
+        console.log("[shogitv:recov] gameId mismatch, skip", { wanted: gameId, current: s.gameId });
+        return s;
+      }
       // Don't overwrite if SSE has already delivered a fresher sfen than what we're recovering.
-      if (s.sfen === sfen) return s;
+      if (s.sfen === sfen) {
+        console.log("[shogitv:recov] dedup (same sfen)", { tail: sfen.slice(-30) });
+        return s;
+      }
+      console.log("[shogitv:recov] UPDATE", { from: s.sfen?.slice(-30), to: sfen.slice(-30), lm });
       return { ...s, sfen, lm, posSeq: s.posSeq + 1, sfenAt: Date.now() };
     });
   };
