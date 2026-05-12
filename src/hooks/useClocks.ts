@@ -124,6 +124,13 @@ export function useClocks(args: {
   onPosition?: (gameId: string, sfen: string, lm: string | null) => void;
 }): UseClocksState {
   const [state, setState] = useState<UseClocksState>(INITIAL);
+  // Mirror state to a ref so async-after-await code can read the pre-setState
+  // snapshot without relying on the setState callback running synchronously
+  // (which it doesn't — React 18's auto-batching defers the updater to the next
+  // render, so any side-effect writes to closure variables from inside the
+  // updater are NOT visible immediately after the setState call).
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const lastSeenGameSeqRef = useRef<number>(-1);
   const lastSeenPosSeqRef = useRef<number>(-1);
   const lastFetchAtRef = useRef<number>(0);
@@ -203,48 +210,55 @@ export function useClocks(args: {
         : exp?.endStatus ?? null;
       const winner: Color | null = info?.winner ?? exp?.winner ?? null;
 
+      // Pre-compute everything that depends on pre-setState state via stateRef.
+      // setState's updater callback runs at the NEXT render (React 18 auto-batches
+      // async setStates), not synchronously here, so writing to closure variables
+      // from inside the updater wouldn't be visible until later. Use stateRef as
+      // the snapshot source instead.
+      const sBefore = stateRef.current;
+      const moveAdvanced = exp ? exp.lastPly > sBefore.plies : false;
+      const jsonPlyAdvance = info && info.plies > sBefore.plies ? info.plies : null;
+      const justFinished = finished && !sBefore.finished;
+      const firstSync = sBefore.syncMs === null;
       // SSE-lag detection: a ply count past ours means SSE missed the move(s).
-      // KIF gives lastPly directly; JSON-only ticks expose `plies`. Capture the
-      // advance amount inside setState so we can read it against pre-setState
-      // s.plies, then run the side effect afterwards.
       let advancedToPly: number | null = null;
+      if (!firstSync) {
+        if (moveAdvanced) advancedToPly = exp!.lastPly;
+        else if (!exp && jsonPlyAdvance !== null) advancedToPly = jsonPlyAdvance;
+      }
       // KIF replays moves through shogiops to derive a sfen + lm. Hand it back to
       // the parent for board update whenever it gives us a fresher position than
       // we already have (or on first sync of a game).
-      let posSnapshot: { sfen: string; lm: string | null } | null = null;
-      let diag: Record<string, unknown> | null = null;
+      const posSnapshot: { sfen: string; lm: string | null } | null =
+        exp && exp.sfen && (moveAdvanced || firstSync)
+          ? { sfen: exp.sfen, lm: exp.lm ?? null }
+          : null;
+      console.log("[shogitv:sync]", {
+        reason,
+        kifLastPly: exp?.lastPly,
+        kifSfen: exp?.sfen?.slice(-30) ?? null,
+        kifLm: exp?.lm ?? null,
+        jsonStatus: info?.status,
+        jsonPlies: info?.plies,
+        sPlies: sBefore.plies,
+        moveAdvanced,
+        justFinished,
+        firstSync,
+        posSnapshotSet: !!posSnapshot,
+        earlyReturn: !moveAdvanced && !justFinished && !firstSync,
+      });
+
       setState((s) => {
         // If no new move was played and the game hasn't ended, the export carries no fresh
         // clock authority — keep the locally-ticking clocks. Otherwise byoyomi resets to its
         // full 30s at every safety-net sync because buildFromExport always returns the
-        // post-last-move state, where byoyomi is 30 by shogi rules.
-        const moveAdvanced = exp ? exp.lastPly > s.plies : false;
-        const jsonPlyAdvance = info && info.plies > s.plies ? info.plies : null;
-        const justFinished = finished && !s.finished;
-        const firstSync = s.syncMs === null;
-        if (!firstSync) {
-          if (moveAdvanced) advancedToPly = exp!.lastPly;
-          else if (!exp && jsonPlyAdvance !== null) advancedToPly = jsonPlyAdvance;
-        }
-        if (exp && exp.sfen && (moveAdvanced || firstSync)) {
-          posSnapshot = { sfen: exp.sfen, lm: exp.lm ?? null };
-        }
-        diag = {
-          reason,
-          kifLastPly: exp?.lastPly,
-          kifSfen: exp?.sfen?.slice(-30) ?? null,
-          kifLm: exp?.lm ?? null,
-          jsonStatus: info?.status,
-          jsonPlies: info?.plies,
-          sPlies: s.plies,
-          sSfen_state_game: undefined, // tv.sfen lives elsewhere
-          moveAdvanced,
-          justFinished,
-          firstSync,
-          posSnapshotSet: !!posSnapshot,
-          earlyReturn: !moveAdvanced && !justFinished && !firstSync,
-        };
-        if (!moveAdvanced && !justFinished && !firstSync) {
+        // post-last-move state, where byoyomi is 30 by shogi rules. Re-derive flags from
+        // s here (rather than reusing the sBefore-based values) because another setState
+        // could have run between sBefore capture and this updater firing.
+        const ma = exp ? exp.lastPly > s.plies : false;
+        const jf = finished && !s.finished;
+        const fs = s.syncMs === null;
+        if (!ma && !jf && !fs) {
           return { ...s, loading: false };
         }
         // Status-only path (interval polling that detected just-finished). Don't touch
@@ -278,6 +292,7 @@ export function useClocks(args: {
           winner,
         };
       });
+
       // 12s threshold is permissive enough to avoid false positives in blitz games while
       // still catching real zombies (which tend to be silent for 30s+).
       if (advancedToPly !== null && !finished) {
@@ -291,9 +306,7 @@ export function useClocks(args: {
       // JSON moves fetch. applyRecovery (the typical destination of this callback)
       // has its own "if (s.sfen === sfen) return s" dedup, so this is a no-op when
       // SSE already had the latest position.
-      const snap = posSnapshot as { sfen: string; lm: string | null } | null;
-      console.log("[shogitv:sync]", diag);
-      if (snap) onPositionRef.current?.(gameId, snap.sfen, snap.lm);
+      if (posSnapshot) onPositionRef.current?.(gameId, posSnapshot.sfen, posSnapshot.lm);
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
       // Soft-fail: keep showing previous state.
