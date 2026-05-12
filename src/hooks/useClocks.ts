@@ -131,6 +131,10 @@ export function useClocks(args: {
   // updater are NOT visible immediately after the setState call).
   const stateRef = useRef(state);
   stateRef.current = state;
+  // Mirror args.sfen so async sync() callbacks (which may have been scheduled
+  // when args.sfen was older) can read the freshest SSE-delivered sfen.
+  const argsSfenRef = useRef(args.sfen);
+  argsSfenRef.current = args.sfen;
   const lastSeenGameSeqRef = useRef<number>(-1);
   const lastSeenPosSeqRef = useRef<number>(-1);
   const lastFetchAtRef = useRef<number>(0);
@@ -227,10 +231,17 @@ export function useClocks(args: {
         else if (!exp && jsonPlyAdvance !== null) advancedToPly = jsonPlyAdvance;
       }
       // KIF replays moves through shogiops to derive a sfen + lm. Hand it back to
-      // the parent for board update whenever it gives us a fresher position than
-      // we already have (or on first sync of a game).
+      // the parent for board update — but ONLY when SSE has been silent long enough
+      // that we suspect the SSE-delivered tv.sfen is stale (12s threshold, matching
+      // onSseLag), or it's the very first sync of a game (no SSE data yet at all).
+      // Otherwise SSE is the authoritative source for the latest position, and KIF
+      // can lag SSE by a few plies (CDN cache or lishogi's anti-cheat omission), so
+      // applying KIF here would *regress* the board.
+      const sfenAtForLag = sfenAtRef.current ?? 0;
+      const sseSilent = sfenAtForLag === 0 || Date.now() - sfenAtForLag > 12_000;
+      const trustKifPosition = firstSync || sseSilent;
       const posSnapshot: { sfen: string; lm: string | null } | null =
-        exp && exp.sfen && (moveAdvanced || firstSync)
+        exp && exp.sfen && (moveAdvanced || firstSync) && trustKifPosition
           ? { sfen: exp.sfen, lm: exp.lm ?? null }
           : null;
       console.log("[shogitv:sync]", {
@@ -244,6 +255,8 @@ export function useClocks(args: {
         moveAdvanced,
         justFinished,
         firstSync,
+        sseSilent,
+        trustKifPosition,
         posSnapshotSet: !!posSnapshot,
         earlyReturn: !moveAdvanced && !justFinished && !firstSync,
       });
@@ -275,6 +288,11 @@ export function useClocks(args: {
           };
         }
         const built = buildFromExport(exp, info);
+        // Prefer SSE's sfen for the side-to-move when one is available — KIF can lag
+        // SSE by a few plies (CDN / anti-cheat) so exp.turn might be wrong relative
+        // to what the user is actually watching on the board. parseTurnFromSfen()
+        // reads the turn token directly out of the freshest SSE-delivered SFEN.
+        const sseTurn = parseTurnFromSfen(argsSfenRef.current);
         return {
           ...s,
           loading: false,
@@ -282,7 +300,7 @@ export function useClocks(args: {
           byoyomi: built.byoyomi,
           periods: built.periods,
           plies: exp.lastPly,
-          turn: finished ? null : exp.turn,
+          turn: finished ? null : sseTurn ?? exp.turn,
           syncMs: Date.now(),
           sente: built.sente,
           gote: built.gote,
