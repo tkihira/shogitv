@@ -9,6 +9,7 @@ import { useEngine } from "./hooks/useEngine";
 import { useClocks } from "./hooks/useClocks";
 import type { TvFeaturedPlayer } from "./feed/tvFeed";
 import { fetchInitialPosition } from "./feed/replayMoves";
+import { dlog } from "./debug";
 
 export default function App() {
   const tv = useTvFeed();
@@ -33,7 +34,7 @@ export default function App() {
       // KIF-derived sfen from a periodic sync. applyRecovery dedupes when the
       // sfen already matches what SSE delivered, so this is a no-op in the
       // healthy case and a board catch-up when SSE missed events.
-      console.log("[shogitv:onPos]", { gameId, sfenTail: sfen.slice(-30), lm, tvSfenTail: tv.sfen?.slice(-30), match: tv.sfen === sfen });
+      dlog("[shogitv:onPos]", { gameId, sfenTail: sfen.slice(-30), lm, tvSfenTail: tv.sfen?.slice(-30), match: tv.sfen === sfen });
       tv.applyRecovery(gameId, sfen, lm);
     },
   });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchGameInfo, statusToEndStatus, type GameInfo } from "../feed/gameInfo";
 import { fetchGameExport, type EndStatus, type GameExport } from "../feed/gameExport";
+import { dlog } from "../debug";
 
 export type Color = "sente" | "gote";
 
@@ -244,7 +245,7 @@ export function useClocks(args: {
         exp && exp.sfen && (moveAdvanced || firstSync) && trustKifPosition
           ? { sfen: exp.sfen, lm: exp.lm ?? null }
           : null;
-      console.log("[shogitv:sync]", {
+      dlog("[shogitv:sync]", {
         reason,
         kifLastPly: exp?.lastPly,
         kifSfen: exp?.sfen?.slice(-30) ?? null,
