@@ -7,11 +7,13 @@ import { ClockRow, ClockMeta, GameResultBanner } from "./components/Clocks";
 import { useTvFeed } from "./hooks/useTvFeed";
 import { useEngine } from "./hooks/useEngine";
 import { useClocks } from "./hooks/useClocks";
+import { useWakeLock } from "./hooks/useWakeLock";
 import type { TvFeaturedPlayer } from "./feed/tvFeed";
 import { fetchInitialPosition } from "./feed/replayMoves";
 import { dlog } from "./debug";
 
 export default function App() {
+  useWakeLock();
   const tv = useTvFeed();
   const clocks = useClocks({
     gameId: tv.gameId,
