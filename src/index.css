@@ -770,8 +770,15 @@ counter,
   gap: 8px;
 }
 
-/* === Landscape mobile: compress vertical chrome so the board can be large === */
-@media (max-width: 800px) and (orientation: landscape) {
+/* === Landscape mobile: compress vertical chrome so the board can be large ===
+ *
+ * Gated on max-height rather than max-width: a phone held in landscape always has
+ * a short viewport (iPhone 17 ≈ 402px, even the largest phones stay under ~480px),
+ * whereas a desktop window or iPad in landscape is 600px+ tall. The old
+ * `max-width: 800px` missed wider phones like the iPhone 17 (874px in landscape),
+ * which then fell through to the desktop board sizing — a height-squished board with
+ * full-size hand pieces twice the board-square size. */
+@media (orientation: landscape) and (max-height: 500px) {
   .layout {
     grid-template-columns: minmax(0, 1fr) minmax(160px, 280px);
     gap: 8px;
